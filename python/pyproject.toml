@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fixed-wing"
+version = "0.1.0"
+description = "Minimal fixed-wing simulator for RL, following the structure of the L2F simulator (RLtools)"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["fixed_wing*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
