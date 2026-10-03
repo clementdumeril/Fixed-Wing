@@ -11,9 +11,13 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+ui = ["ui-server", "websockets"]
 
 [tool.setuptools.packages.find]
 include = ["fixed_wing*"]
+
+[tool.setuptools.package-data]
+fixed_wing = ["airplane/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -20,6 +20,19 @@ python -m venv ~/.venvs/fixed-wing
 ~/.venvs/fixed-wing/Scripts/python -m pytest
 ```
 
+## Visualizer
+
+Uses the rl-tools [ui-server](https://github.com/rl-tools/ui-server), with the same protocol as L2F: the simulator
+sends its own render module (`fixed_wing/airplane/ui.js`), then the parameters and the states over a websocket.
+
+```bash
+~/.venvs/fixed-wing/Scripts/python -m pip install -e ".[ui]"
+~/.venvs/fixed-wing/Scripts/ui-server          # then open http://localhost:13337
+~/.venvs/fixed-wing/Scripts/python examples/ui.py
+```
+
+Reload the page after changing `ui.js`, the browser only loads the render module once.
+
 ## Example
 
 ```python
