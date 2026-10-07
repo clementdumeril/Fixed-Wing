@@ -4,7 +4,7 @@ World frame: z up. Body frame: x forward, y left, z up (same as L2F).
 The aerodynamic coefficients keep the usual aerospace convention (body x forward, y right, z down),
 the conversion happens in one place: airplane_aerodynamics in operations.py.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -74,6 +74,12 @@ class Integration:
 @dataclass
 class Disturbances:
     wind: np.ndarray  # (3,), world frame, constant over an episode
+    # "1 - cos" discrete gust, fixed in space: the airplane meets it when it flies through the slab
+    # gust_start <= gust_direction . position < gust_start + gust_length. No gust by default.
+    gust: np.ndarray = field(default_factory=lambda: np.zeros(3))  # (3,), peak gust velocity, world frame
+    gust_direction: np.ndarray = field(default_factory=lambda: np.array([1.0, 0, 0]))  # unit, normal to the gust front
+    gust_start: float = 0.0  # m, along gust_direction
+    gust_length: float = 1.0  # m, the gust peaks in the middle
 
 
 @dataclass

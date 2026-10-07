@@ -8,6 +8,7 @@ from fixed_wing.airplane.operations import (
     normalize_action,
     specific_energy,
     step,
+    wind,
 )
 from fixed_wing.airplane.parameters import aerosonde
 from fixed_wing.airplane.trim import trim
@@ -175,3 +176,36 @@ def test_constant_wind_only_shifts_the_trajectory():
     assert np.allclose(state_windy.position, state_calm.position + wind * seconds, atol=1e-6)
     assert np.allclose(state_windy.linear_velocity, state_calm.linear_velocity + wind, atol=1e-6)
     assert np.allclose(state_windy.orientation, state_calm.orientation, atol=1e-9)
+
+
+def test_gust_profile():
+    parameters = aerosonde()
+    d = parameters.disturbances
+    d.wind = np.array([0, 4.0, 0])
+    d.gust = np.array([0, 0, 6.0])
+    d.gust_start, d.gust_length = 100.0, 50.0
+    at = lambda x: wind(parameters, np.array([x, 0.0, 0.0]))
+    assert np.allclose(at(99.9), d.wind)  # before the gust
+    assert np.allclose(at(100.0), d.wind)  # smooth start
+    assert np.allclose(at(125.0), d.wind + d.gust)  # peak in the middle
+    assert np.allclose(at(150.0), d.wind)  # after the gust
+    # the gust front is a slab: only the position along gust_direction matters
+    assert np.allclose(wind(parameters, np.array([125.0, -30.0, 80.0])), d.wind + d.gust)
+
+
+def test_updraft_gust_raises_alpha_and_pitches_down():
+    parameters = aerosonde()
+    trimmed = trim(parameters, AIRSPEED)
+    parameters.disturbances.gust = np.array([0, 0, 6.0])
+    parameters.disturbances.gust_start, parameters.disturbances.gust_length = 25.0, 50.0  # crossed from t = 1 s to 3 s
+    state = trimmed
+    alphas, pitch_rates = [], []
+    for _ in range(300):
+        state = step(parameters, state, normalize_action(parameters, trimmed.actuators))
+        alphas.append(air_data(parameters, state)[2])
+        pitch_rates.append(-state.angular_velocity[1])  # nose up positive
+    _, _, alpha_trim, _ = air_data(parameters, trimmed)
+    assert max(alphas) > alpha_trim + np.deg2rad(3)  # the air comes from below
+    assert min(pitch_rates) < 0  # static stability: the nose turns into the relative wind
+    # the updraft gives energy to the airplane (soaring)
+    assert specific_energy(parameters, state) > specific_energy(parameters, trimmed)

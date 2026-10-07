@@ -5,7 +5,9 @@ Minimal fixed-wing simulator for RL, written as a readable NumPy port of the str
 (`Parameters` / `State` / `dynamics` -> RK4 -> `post_integration`).
 
 - `fixed_wing/multirotor/`: port of the L2F quadrotor core, used to check the skeleton (quaternions, RK4, actuator lag).
-- `fixed_wing/airplane/`: same skeleton with fixed-wing aerodynamics, wind, actuator lag and a trim solver.
+- `fixed_wing/airplane/`: same skeleton with fixed-wing aerodynamics, wind and "1 - cos" gusts, actuator lag and a trim solver.
+
+What is translated from L2F, adapted or new: [DIFFERENCES_L2F.md](DIFFERENCES_L2F.md).
 
 Conventions (same as L2F): world z up, body x forward / y left / z up, quaternion `[w, x, y, z]` body to world,
 linear velocity in the world frame, angular velocity in the body frame, RK4 at 100 Hz.
