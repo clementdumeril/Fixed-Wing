@@ -194,7 +194,7 @@ export async function render(ui_state, parameters, state, action){
 
     const deg = (rad) => (rad * 180 / Math.PI).toFixed(1).padStart(6)
     const num = (x) => x.toFixed(1).padStart(6)
-    const wind = parameters.disturbances.wind
+    const wind = state.wind
     ui_state.hud.textContent = [
         `airspeed     ${num(state.air_data.airspeed)} m/s`,
         `ground speed ${num(Math.hypot(...state.linear_velocity))} m/s`,

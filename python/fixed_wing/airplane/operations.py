@@ -26,8 +26,13 @@ def initial_state(parameters: Parameters) -> State:
 
 # 60_dynamics.h
 def wind(parameters: Parameters, position):
-    # world frame; constant for now, the position argument is the hook for shear / thermals
-    return parameters.disturbances.wind
+    # world frame: constant wind + "1 - cos" gust where the airplane is
+    # the gust depends on the position, not on the time, so the dynamics stay a function of (parameters, state, action)
+    d = parameters.disturbances
+    s = (d.gust_direction @ position - d.gust_start) / d.gust_length  # 0 -> 1 across the gust
+    if 0 <= s < 1:
+        return d.wind + d.gust * 0.5 * (1 - np.cos(2 * np.pi * s))
+    return d.wind
 
 
 def air_data(parameters: Parameters, state: State):
