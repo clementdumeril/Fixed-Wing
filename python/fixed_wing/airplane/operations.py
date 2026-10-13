@@ -92,6 +92,7 @@ def airplane_dynamics(parameters: Parameters, state: State, action) -> State:
         linear_velocity=rotate_vector_by_quaternion(state.orientation, force) / d.mass + d.gravity,
         angular_velocity=d.J_inv @ (moment - np.cross(state.angular_velocity, d.J @ state.angular_velocity)),
         actuators=(action - state.actuators) / d.actuator_time_constants,
+        action_buffer=np.zeros_like(state.action_buffer),  # discrete, updated in step
     )
 
 
@@ -115,9 +116,25 @@ def normalize_action(parameters: Parameters, action_scaled):
     return (action_scaled - limits[:, 0]) / (limits[:, 1] - limits[:, 0]) * 2 - 1
 
 
+def delay_action(parameters: Parameters, state: State, command):
+    """Returns the command applied during this control period and the new buffer of pending commands."""
+    n = parameters.latency.action_steps
+    if n == 0:
+        return command, state.action_buffer
+    buffer = state.action_buffer
+    if len(buffer) != n:  # first call: the link is assumed to hold the current actuator positions
+        buffer = np.tile(state.actuators, (n, 1))
+    return buffer[0], np.vstack([buffer[1:], command])
+
+
 def step(parameters: Parameters, state: State, action) -> State:
-    action_scaled = scale_action(parameters, np.asarray(action, dtype=float))
-    next_state = rk4(airplane_dynamics, parameters, state, action_scaled, parameters.integration.dt)
+    command = scale_action(parameters, np.asarray(action, dtype=float))
+    applied, action_buffer = delay_action(parameters, state, command)
+    n = parameters.integration.n_substeps
+    next_state = state
+    for _ in range(n):  # as in L2F, post_integration runs once after the substeps
+        next_state = rk4(airplane_dynamics, parameters, next_state, applied, parameters.integration.dt / n)
+    next_state.action_buffer = action_buffer
     return post_integration(parameters, next_state)
 
 

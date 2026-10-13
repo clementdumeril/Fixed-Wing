@@ -21,16 +21,20 @@ def _state(parameters, airspeed, pitch, flight_path_angle, elevator, throttle):
     )
 
 
-def trim(parameters: Parameters, airspeed, flight_path_angle=0.0, glide=False, tolerance=1e-10, max_iterations=50):
+def trim(parameters: Parameters, airspeed, flight_path_angle=0.0, glide=False, throttle=None, tolerance=1e-10, max_iterations=50):
     """Returns the trimmed state, heading along world x. The trimmed action is state.actuators.
 
-    Powered (glide=False): solves for pitch, elevator, throttle at the given flight path angle.
-    Glide (glide=True): throttle is zero, solves for pitch, elevator, flight path angle.
+    Default: solves for pitch, elevator, throttle at the given flight path angle.
+    Fixed throttle (throttle=value, e.g. 1.0 for the maximum climb): solves for pitch, elevator, flight path angle.
+    Glide (glide=True): same as throttle=0.
     flight_path_angle is relative to the air mass, positive up.
     """
+    if glide:
+        throttle = 0.0
+
     def unpack(x):
-        if glide:
-            return _state(parameters, airspeed, pitch=x[0], flight_path_angle=x[2], elevator=x[1], throttle=0.0)
+        if throttle is not None:
+            return _state(parameters, airspeed, pitch=x[0], flight_path_angle=x[2], elevator=x[1], throttle=throttle)
         return _state(parameters, airspeed, pitch=x[0], flight_path_angle=flight_path_angle, elevator=x[1], throttle=x[2])
 
     def residual(x):
@@ -38,7 +42,7 @@ def trim(parameters: Parameters, airspeed, flight_path_angle=0.0, glide=False, t
         change = airplane_dynamics(parameters, state, state.actuators)
         return np.array([change.linear_velocity[0], change.linear_velocity[2], change.angular_velocity[1]])
 
-    x = np.array([0.05, 0.0, -0.1 if glide else 0.5])
+    x = np.array([0.05, 0.0, 0.5 if throttle is None else (-0.1 if throttle == 0 else 0.1)])
     for _ in range(max_iterations):
         r = residual(x)
         if np.max(np.abs(r)) < tolerance:

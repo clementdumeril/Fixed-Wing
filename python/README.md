@@ -8,6 +8,12 @@ Minimal fixed-wing simulator for RL, written as a readable NumPy port of the str
 - `fixed_wing/airplane/`: same skeleton with fixed-wing aerodynamics, wind and "1 - cos" gusts, actuator lag and a trim solver.
 
 What is translated from L2F, adapted or new: [DIFFERENCES_L2F.md](DIFFERENCES_L2F.md).
+Where every parameter comes from, and how the placeholder compares with the lab's Strix: [PARAMETERS.md](PARAMETERS.md).
+
+```bash
+~/.venvs/fixed-wing/Scripts/python examples/validate.py   # flight performance vs the Strix numbers from the lab papers
+~/.venvs/fixed-wing/Scripts/python examples/benchmark.py  # simulation speed
+```
 
 Conventions (same as L2F): world z up, body x forward / y left / z up, quaternion `[w, x, y, z]` body to world,
 linear velocity in the world frame, angular velocity in the body frame, RK4 at 100 Hz.

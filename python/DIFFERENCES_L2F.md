@@ -42,13 +42,21 @@ constant wind then only shifts the trajectory, as it should.
 - **Trim.** Finds the pitch, elevator and throttle for steady flight (all accelerations equal to zero). There is no
   closed-form solution, so it uses Newton's method with a finite-difference Jacobian; it converges in a few
   iterations. Used to start simulations from a realistic state. Example, Aerosonde at 25 m/s: pitch 4.72°,
-  elevator −6.26°, throttle 28.5 %.
-- **Tests.** 16 airplane tests: trim, control signs, actuator lag and saturation, wind, gust.
+  elevator −6.26°, throttle 28.5 %. A fixed throttle (e.g. full throttle) gives the steady climb or glide instead.
+- **Command latency.** `latency.action_steps` delays each command by a number of control periods, for the Orin NX →
+  PX4 link. The pending commands live in `State.action_buffer`.
+- **Validation against flight data.** `validation.py` computes the figures the lab measured on the Strix (best glide,
+  sink rate, level-flight throttle, climb and descent rates) and calibrates a drag polar from a measured best glide.
+  Sources of every parameter: [PARAMETERS.md](PARAMETERS.md).
+- **Tests.** 20 airplane tests: trim, control signs, actuator lag and saturation, wind, gust, substeps, latency,
+  calibration.
+
+Integration substeps are now ported as in L2F (`integration.n_substeps`, the command held over all of them).
 
 ## 4. Not ported yet (needed for closed-loop RL)
 
-Observation, reward, termination, parameter and initial-state randomization, action noise, integration substeps
-(`N_SUBSTEPS`), state clamps (`STATE_LIMIT_*`) and the closed-form motor model.
+Observation, reward, termination, parameter and initial-state randomization, action noise, state clamps
+(`STATE_LIMIT_*`) and the closed-form motor model.
 
 ## 5. Simplifications to revisit
 

@@ -12,6 +12,7 @@ from fixed_wing.airplane.operations import (
 )
 from fixed_wing.airplane.parameters import aerosonde
 from fixed_wing.airplane.trim import trim
+from fixed_wing.airplane.validation import best_glide, calibrate_drag_polar
 from fixed_wing.quaternion_helper import rotate_vector_by_quaternion
 
 AIRSPEED = 25.0
@@ -209,3 +210,55 @@ def test_updraft_gust_raises_alpha_and_pitches_down():
     assert min(pitch_rates) < 0  # static stability: the nose turns into the relative wind
     # the updraft gives energy to the airplane (soaring)
     assert specific_energy(parameters, state) > specific_energy(parameters, trimmed)
+
+
+def test_substeps_match_finer_control_steps():
+    # one call with dt = 0.02 and 2 substeps integrates like two calls with dt = 0.01 (same held command)
+    fine, coarse = aerosonde(), aerosonde()
+    coarse.integration.dt, coarse.integration.n_substeps = 0.02, 2
+    trimmed = trim(fine, AIRSPEED)
+    action = trimmed.actuators.copy()
+    action[AILERON] = np.deg2rad(3)
+    action = normalize_action(fine, action)
+    a, b = trimmed, trimmed
+    for _ in range(100):
+        a = step(fine, step(fine, a, action), action)
+        b = step(coarse, b, action)
+    assert np.allclose(a.position, b.position, atol=1e-6)
+    assert np.allclose(a.orientation, b.orientation, atol=1e-8)
+
+
+def test_action_delay():
+    parameters = aerosonde()
+    parameters.latency.action_steps = 3
+    trimmed = trim(parameters, AIRSPEED)
+    command = trimmed.actuators.copy()
+    command[AILERON] = np.deg2rad(10)
+    action = normalize_action(parameters, command)
+    state = trimmed
+    for _ in range(3):  # the link still delivers the trim command
+        state = step(parameters, state, action)
+        assert state.actuators[AILERON] == trimmed.actuators[AILERON]
+    state = step(parameters, state, action)  # the first new command arrives
+    assert state.actuators[AILERON] > trimmed.actuators[AILERON]
+    assert state.action_buffer.shape == (3, 4)
+
+
+def test_trim_with_fixed_throttle():
+    parameters = aerosonde()
+    level = trim(parameters, AIRSPEED)
+    same = trim(parameters, AIRSPEED, throttle=level.actuators[THROTTLE])
+    assert np.isclose(same.linear_velocity[2], 0, atol=1e-6)  # the level-flight throttle gives level flight
+    full = trim(parameters, AIRSPEED, throttle=1.0)
+    assert full.linear_velocity[2] > 0  # full throttle climbs
+    assert np.allclose(trim(parameters, AIRSPEED, throttle=0.0).linear_velocity, trim(parameters, AIRSPEED, glide=True).linear_velocity)
+
+
+def test_calibration_recovers_the_drag_polar():
+    # the best glide of the Aerosonde model, fed back into the calibration, gives back its own polar
+    parameters = aerosonde()
+    d = parameters.dynamics
+    airspeed, sink, _ = best_glide(parameters)
+    C_D_p, oswald = calibrate_drag_polar(d.mass, d.wing_area, d.wing_span, airspeed, sink, d.air_density, 9.81)
+    assert np.isclose(C_D_p, d.aerodynamics.C_D_p, rtol=1e-3)
+    assert np.isclose(oswald, d.aerodynamics.oswald_efficiency, rtol=1e-3)

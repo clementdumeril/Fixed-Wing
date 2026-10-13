@@ -68,7 +68,14 @@ class Dynamics:
 
 @dataclass
 class Integration:
-    dt: float
+    dt: float  # control period: one call to step
+    n_substeps: int = 1  # RK4 steps per control period (N_SUBSTEPS in L2F), the command is held over all of them
+
+
+@dataclass
+class Latency:
+    # control periods between sending a command and its application, e.g. the Orin NX -> PX4 link
+    action_steps: int = 0
 
 
 @dataclass
@@ -87,6 +94,7 @@ class Parameters:
     dynamics: Dynamics
     integration: Integration
     disturbances: Disturbances
+    latency: Latency = field(default_factory=Latency)
 
 
 @dataclass
@@ -96,3 +104,5 @@ class State:
     linear_velocity: np.ndarray  # world frame, ground-relative
     angular_velocity: np.ndarray  # body frame
     actuators: np.ndarray  # (4,), actual deflections [rad] and throttle [0, 1]
+    # commands sent but not applied yet, oldest first, (latency.action_steps, 4); not integrated (zero derivative)
+    action_buffer: np.ndarray = field(default_factory=lambda: np.zeros((0, 4)))
