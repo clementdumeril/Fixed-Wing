@@ -1,7 +1,7 @@
 # Parameters: values and where they come from
 
-Every number the simulator uses, with its source. "Guess" means no source: it must be identified or replaced.
-Status on 10 Oct 2026: the aircraft is still the Aerosonde placeholder; the Strix model has been requested from the lab.
+Every number the simulator uses and where it comes from. "Guess" means there is no source and the value still has to be identified or replaced.
+As of 10 Oct 2026 the aircraft is still the Aerosonde placeholder, and the Strix model has been requested from the lab.
 
 ## Aircraft (`aerosonde()` in `fixed_wing/airplane/parameters.py`)
 
@@ -12,8 +12,8 @@ Status on 10 Oct 2026: the aircraft is still the Aerosonde placeholder; the Stri
 | Wing area, span, mean chord | 0.55 m², 2.8956 m, 0.18994 m | Beard & McLain, appendix E |
 | Air density | 1.2682 kg/m³ | Beard & McLain, appendix E |
 | 28 aerodynamic coefficients | see `parameters.py` | Beard & McLain, appendix E (aerospace FRD convention) |
-| Maximum thrust `thrust_max` | 40 N | **Guess** (the book uses a propeller model instead) |
-| Actuator time constants | 0.05 s (surfaces), 0.2 s (throttle) | **Guess** |
+| Maximum thrust `thrust_max` | 40 N | Guess (the book uses a propeller model instead) |
+| Actuator time constants | 0.05 s (surfaces), 0.2 s (throttle) | Guess |
 | Surface limits | ±30° | Choice; same bounds as the lab NMPC (Bobbili et al. 2026, Table I) |
 | Throttle range | [0, 1] | Convention, as in the lab NMPC |
 
@@ -21,9 +21,9 @@ Status on 10 Oct 2026: the aircraft is still the Aerosonde placeholder; the Stri
 
 | Parameter | Value | Source |
 | --- | --- | --- |
-| Control period `integration.dt` | 0.01 s (100 Hz) | Same as L2F; **to revisit**: external actuator commands to PX4 are limited to < ~50 Hz (Bobbili et al. 2026) |
+| Control period `integration.dt` | 0.01 s (100 Hz) | Same as L2F; to revisit: external actuator commands to PX4 are limited to < ~50 Hz (Bobbili et al. 2026) |
 | Substeps `integration.n_substeps` | 1 | Choice (L2F `N_SUBSTEPS`); use > 1 when the control period grows |
-| Command latency `latency.action_steps` | 0 | **Unknown**; Orin NX → PX4 latency asked to the lab |
+| Command latency `latency.action_steps` | 0 | Unknown; Orin NX → PX4 latency asked to the lab |
 | Wind, gust | none | Set per experiment |
 
 ## Strix: what is known
@@ -36,7 +36,7 @@ Status on 10 Oct 2026: the aircraft is still the Aerosonde placeholder; the Stri
 | Level-flight throttle | 0.376 at ~12 m/s | Morando et al. 2026 |
 | Trim | throttle 0.60, elevator 8° (airspeed not given) | Bobbili et al. 2026, arXiv 2608.20655 (AVL model) |
 | Climb / descent rate at 15 m/s | 4.6 / 2.26 m/s in flight (6 / 3 m/s in their simulation) | Lim & Loianno 2026 |
-| Aero coefficients, inertia, wing area, chord, T_max | **not published** | AVL model of the NMPC, requested |
+| Aero coefficients, inertia, wing area, chord, T_max | not published | AVL model of the NMPC, requested |
 
 ## Placeholder vs Strix (`examples/validate.py`)
 
