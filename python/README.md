@@ -1,24 +1,14 @@
 # fixed_wing (Python reference)
 
-A minimal fixed-wing simulator for RL. It is a readable NumPy port of the structure of the
+A NumPy port of the structure of the
 [L2F simulator](https://github.com/rl-tools/rl-tools/tree/master/include/rl_tools/rl/environments/l2f)
-(`Parameters` / `State` / `dynamics` -> RK4 -> `post_integration`).
+with fixed-wing physics in `fixed_wing/airplane/`. `fixed_wing/multirotor/` is the L2F quadrotor core, which I used to check the skeleton.
 
-- `fixed_wing/multirotor/`: port of the L2F quadrotor core, which I used to check the skeleton (quaternions, RK4, actuator lag).
-- `fixed_wing/airplane/`: the same skeleton with fixed-wing aerodynamics, wind and "1 - cos" gusts, actuator lag and a trim solver.
+[DIFFERENCES_L2F.md](DIFFERENCES_L2F.md) lists what changed from L2F.
+[PARAMETERS.md](PARAMETERS.md) gives the source of every parameter.
 
-[DIFFERENCES_L2F.md](DIFFERENCES_L2F.md) lists what is translated from L2F, what is adapted and what is new.
-[PARAMETERS.md](PARAMETERS.md) gives the source of every parameter and compares the placeholder with the lab's Strix.
-
-```bash
-~/.venvs/fixed-wing/Scripts/python examples/validate.py   # flight performance vs the Strix numbers from the lab papers
-~/.venvs/fixed-wing/Scripts/python examples/benchmark.py  # simulation speed
-```
-
-Conventions are the same as L2F: world z up, body x forward / y left / z up, quaternion `[w, x, y, z]` body to world,
-linear velocity in the world frame, angular velocity in the body frame, RK4 at 100 Hz.
-The aerodynamic coefficients keep the aerospace convention (y right, z down), and the conversion happens in
-`airplane_aerodynamics` only.
+Conventions are the same as L2F (world z up, body x forward / y left / z up, quaternion `[w, x, y, z]`, RK4 at 100 Hz).
+The aerodynamic coefficients keep the aerospace convention, converted in `airplane_aerodynamics` only.
 
 ## Setup
 
@@ -26,12 +16,13 @@ The aerodynamic coefficients keep the aerospace convention (y right, z down), an
 python -m venv ~/.venvs/fixed-wing
 ~/.venvs/fixed-wing/Scripts/python -m pip install -e ".[dev]"
 ~/.venvs/fixed-wing/Scripts/python -m pytest
+~/.venvs/fixed-wing/Scripts/python examples/validate.py   # flight performance vs the Strix numbers from the lab papers
+~/.venvs/fixed-wing/Scripts/python examples/benchmark.py  # simulation speed
 ```
 
 ## Visualizer
 
-This uses the rl-tools [ui-server](https://github.com/rl-tools/ui-server) with the same protocol as L2F: the simulator
-sends its own render module (`fixed_wing/airplane/ui.js`), then the parameters and the states, over a websocket.
+Uses the rl-tools [ui-server](https://github.com/rl-tools/ui-server) with the same protocol as L2F.
 
 ```bash
 ~/.venvs/fixed-wing/Scripts/python -m pip install -e ".[ui]"
@@ -39,7 +30,7 @@ sends its own render module (`fixed_wing/airplane/ui.js`), then the parameters a
 ~/.venvs/fixed-wing/Scripts/python examples/ui.py
 ```
 
-After changing `ui.js`, reload the page: the browser only loads the render module once.
+After changing `fixed_wing/airplane/ui.js`, reload the page.
 
 ## Example
 

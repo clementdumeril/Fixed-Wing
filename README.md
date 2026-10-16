@@ -10,6 +10,6 @@ The code is in [`python/`](python/):
 
 The aircraft parameters are still the Aerosonde from Beard & McLain, used as a placeholder. The RL environment side of L2F (observation, reward, termination, randomization) is not ported yet, so there is no closed-loop controller: the airplane either flies at trim or follows scripted commands.
 
-Setup, examples and the visualizer are in [python/README.md](python/README.md). What was taken from L2F and what changed is in [python/DIFFERENCES_L2F.md](python/DIFFERENCES_L2F.md), and where each parameter comes from is in [python/PARAMETERS.md](python/PARAMETERS.md).
+Setup and examples: [python/README.md](python/README.md). Changes from L2F: [python/DIFFERENCES_L2F.md](python/DIFFERENCES_L2F.md). Parameter sources: [python/PARAMETERS.md](python/PARAMETERS.md).
 
 MIT license.
