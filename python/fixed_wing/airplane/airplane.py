@@ -79,6 +79,27 @@ class Latency:
 
 
 @dataclass
+class Turbulence:
+    # Dryden turbulence (MIL-F-8785C) in the body frame, frozen in the air mass: it changes with the distance flown
+    # through the air, not with the time. Off by default; presets in parameters.py.
+    sigma: np.ndarray = field(default_factory=lambda: np.zeros(3))  # m/s, [longitudinal, lateral, vertical]
+    length_scale: np.ndarray = field(default_factory=lambda: np.array([200.0, 200.0, 50.0]))  # m, same order
+
+
+@dataclass
+class Thermals:
+    # Allen updraft model (NASA DFRC, AIAA 2006-1510), thermals fixed in space, height above ground = position z.
+    # No thermals by default; sample_thermals in operations.py places them as in the paper.
+    centers: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))  # (N, 2), world x, y of each updraft
+    w_star: float = 2.56  # m/s, convective velocity scale (Allen table 1, mean)
+    z_i: float = 1401.0  # m, convective mixing-layer thickness, the height the updrafts reach (Allen table 1, mean)
+    w_gain: np.ndarray = field(default_factory=lambda: np.ones(0))  # (N,), strength of each updraft / average
+    r_gain: np.ndarray = field(default_factory=lambda: np.ones(0))  # (N,), radius of each updraft / average
+    area: float = 1e6  # m², region holding the updrafts, for the environment sink
+    sink: bool = True  # sinking air outside the updrafts, which balances the rising air (mass conservation)
+
+
+@dataclass
 class Disturbances:
     wind: np.ndarray  # (3,), world frame, constant over an episode
     # "1 - cos" discrete gust, fixed in space: the airplane meets it when it flies through the slab
@@ -87,6 +108,8 @@ class Disturbances:
     gust_direction: np.ndarray = field(default_factory=lambda: np.array([1.0, 0, 0]))  # unit, normal to the gust front
     gust_start: float = 0.0  # m, along gust_direction
     gust_length: float = 1.0  # m, the gust peaks in the middle
+    turbulence: Turbulence = field(default_factory=Turbulence)
+    thermals: Thermals = field(default_factory=Thermals)
 
 
 @dataclass
@@ -106,3 +129,5 @@ class State:
     actuators: np.ndarray  # (4,), actual deflections [rad] and throttle [0, 1]
     # commands sent but not applied yet, oldest first, (latency.action_steps, 4); not integrated (zero derivative)
     action_buffer: np.ndarray = field(default_factory=lambda: np.zeros((0, 4)))
+    # Dryden filter states [u, v1, v2, w1, w2], scaled to unit variance; not integrated (zero derivative), updated in step
+    turbulence: np.ndarray = field(default_factory=lambda: np.zeros(5))

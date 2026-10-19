@@ -18,6 +18,8 @@
 | Control period `integration.dt` | 0.01 s (100 Hz) | Same as L2F; external actuator commands to PX4 are limited to < ~50 Hz (Bobbili et al. 2026) |
 | Substeps `integration.n_substeps` | 1 | Choice (L2F `N_SUBSTEPS`) |
 | Command latency `latency.action_steps` | 0 | Unknown; asked to the lab |
+| Thermals | off; w* = 2.56 m/s, z_i = 1401 m when used | Allen 2006, AIAA 2006-1510, table 1 (yearly mean); shape constants from its appendix B code |
+| Turbulence | off; presets such as σ = 1.06, 1.06, 0.7 m/s, L = 200, 200, 50 m | Beard & McLain, table 4.1 (MIL-F-8785C), light turbulence at 50 m |
 
 ## Strix: what is known
 

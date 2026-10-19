@@ -1,16 +1,24 @@
+from dataclasses import replace
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
-from fixed_wing.airplane.airplane import AILERON, ELEVATOR, RUDDER, THROTTLE
+from fixed_wing.airplane.airplane import AILERON, ELEVATOR, RUDDER, THROTTLE, Thermals
 from fixed_wing.airplane.operations import (
+    advance_turbulence,
     air_data,
     airplane_dynamics,
     normalize_action,
+    sample_thermals,
+    sample_turbulence,
     specific_energy,
     step,
+    thermal_updraft,
+    turbulence_velocity,
     wind,
 )
-from fixed_wing.airplane.parameters import aerosonde
+from fixed_wing.airplane.parameters import aerosonde, dryden_low_altitude_light
 from fixed_wing.airplane.trim import trim
 from fixed_wing.airplane.validation import best_glide, calibrate_drag_polar
 from fixed_wing.quaternion_helper import rotate_vector_by_quaternion
@@ -262,3 +270,95 @@ def test_calibration_recovers_the_drag_polar():
     C_D_p, oswald = calibrate_drag_polar(d.mass, d.wing_area, d.wing_span, airspeed, sink, d.air_density, 9.81)
     assert np.isclose(C_D_p, d.aerodynamics.C_D_p, rtol=1e-3)
     assert np.isclose(oswald, d.aerodynamics.oswald_efficiency, rtol=1e-3)
+
+
+def single_thermal(sink=False):
+    return Thermals(centers=np.zeros((1, 2)), w_gain=np.ones(1), r_gain=np.ones(1), sink=sink)
+
+
+def test_allen_check_case():
+    # Allen 2006, section VI: w* = 2.56 m/s, z_i = 1401 m, z = 280 m, 1 km x 1 km -> r2 = 79.4 m, 5 updrafts
+    rng = np.random.default_rng(0)
+    assert len(sample_thermals(rng, 1000, 1000, height=280).centers) == 5
+    thermals = single_thermal()
+    at = lambda r, z=280.0: thermal_updraft(thermals, np.array([r, 0.0, z]))
+    r2 = 79.4
+    w_bar = (0.2 ** (1 / 3)) * (1 - 1.1 * 0.2) * 2.56  # Eq. (11)
+    radii = np.linspace(0, r2, 400)
+    disk_mean = np.trapezoid([at(r) * 2 * r for r in radii], radii) / r2 ** 2
+    assert np.isclose(disk_mean, w_bar, rtol=0.05)  # the bell shape keeps the average of Eq. (11)
+    assert at(0) > at(40) > at(60) > 0  # strongest at the center
+    assert 0 <= at(r2) < 0.1 * at(0) and at(2 * r2) == 0  # fades out at r2, nothing beyond without the sink
+    assert at(0, z=1500.0) == 0  # above the mixing layer
+
+
+def test_thermal_sink_and_downdraft():
+    thermals = sample_thermals(np.random.default_rng(0), 1000, 1000, height=280)
+    far = thermals.centers[0] + [0, 300.0]
+    if np.min(np.linalg.norm(thermals.centers - far, axis=1)) > 250:  # between the updrafts
+        assert thermal_updraft(thermals, np.array([*far, 280.0])) < 0
+    # high in the mixing layer a downdraft ring surrounds the updraft
+    ring = [thermal_updraft(single_thermal(), np.array([r, 0.0, 1100.0])) for r in np.linspace(60, 200, 30)]
+    assert min(ring) < 0
+
+
+def test_thermal_lifts_a_glider():
+    # gliding through the core of a thermal: the airplane ends higher than in still air
+    calm, lifted = aerosonde(), aerosonde()
+    lifted.disturbances.thermals = single_thermal()
+    lifted.disturbances.thermals.centers = np.array([[100.0, 0.0]])
+    glide = trim(calm, AIRSPEED, glide=True)
+    glide.position[2] = 300.0
+    action = normalize_action(calm, glide.actuators)
+    a, b = glide, glide
+    for _ in range(800):
+        a, b = step(calm, a, action), step(lifted, b, action)
+    assert b.position[2] > a.position[2] + 5
+    assert specific_energy(lifted, b) > specific_energy(calm, a)
+
+
+def test_dryden_statistics():
+    # one step from the stationary distribution keeps the variance and gives the Dryden correlations
+    parameters = aerosonde()
+    parameters.disturbances.turbulence = dryden_low_altitude_light()
+    sigma = parameters.disturbances.turbulence.sigma
+    length_scale = parameters.disturbances.turbulence.length_scale
+    rng = np.random.default_rng(0)
+    distance = 50.0
+    gust = lambda x: turbulence_velocity(parameters, SimpleNamespace(turbulence=x))
+    before, after = [], []
+    for _ in range(20000):
+        x = sample_turbulence(rng)
+        before.append(gust(x))
+        after.append(gust(advance_turbulence(parameters, x, distance, rng)))
+    before, after = np.array(before), np.array(after)
+    assert np.allclose(after.std(axis=0), sigma, rtol=0.03)
+    d = distance / length_scale
+    expected = np.array([np.exp(-d[0]), (1 - d[1] / 2) * np.exp(-d[1]), (1 - d[2] / 2) * np.exp(-d[2])])
+    correlation = np.mean(before * after, axis=0) / sigma ** 2
+    assert np.allclose(correlation, expected, atol=0.03)
+
+
+def test_turbulence_in_flight():
+    parameters = aerosonde()
+    parameters.disturbances.turbulence = dryden_low_altitude_light()
+    trimmed = trim(parameters, AIRSPEED)
+    action = normalize_action(parameters, trimmed.actuators)
+    with pytest.raises(ValueError):
+        step(parameters, trimmed, action)  # turbulence needs a random generator
+
+    def fly(seed):
+        rng = np.random.default_rng(seed)
+        state = replace(trimmed, turbulence=sample_turbulence(rng))
+        alphas = []
+        for _ in range(500):
+            state = step(parameters, state, action, rng)
+            alphas.append(air_data(parameters, state)[2])
+        return state, np.array(alphas)
+
+    a, alphas = fly(0)
+    b, _ = fly(0)
+    c, _ = fly(1)
+    assert np.allclose(a.position, b.position)  # reproducible with the same seed
+    assert not np.allclose(a.position, c.position)
+    assert np.rad2deg(alphas.std()) > 0.3  # the air data now fluctuate

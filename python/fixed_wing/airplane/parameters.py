@@ -1,12 +1,29 @@
 """Aircraft parameter sets, one function per aircraft (counterpart of l2f/parameters/dynamics/*.h)"""
 import numpy as np
 
-from .airplane import Aerodynamics, Disturbances, Dynamics, Integration, Parameters
+from .airplane import Aerodynamics, Disturbances, Dynamics, Integration, Parameters, Turbulence
 
 SIMULATION_FREQUENCY = 100
 
 # body (x forward, y right, z down) <-> body (x forward, y left, z up)
 FRD_FLU = np.diag([1.0, -1.0, -1.0])
+
+
+# Dryden gust parameters, Beard & McLain, "Small Unmanned Aircraft", table 4.1 (from MIL-F-8785C)
+def dryden_low_altitude_light():  # 50 m
+    return Turbulence(sigma=np.array([1.06, 1.06, 0.7]), length_scale=np.array([200.0, 200.0, 50.0]))
+
+
+def dryden_low_altitude_moderate():  # 50 m
+    return Turbulence(sigma=np.array([2.12, 2.12, 1.4]), length_scale=np.array([200.0, 200.0, 50.0]))
+
+
+def dryden_medium_altitude_light():  # 600 m
+    return Turbulence(sigma=np.array([1.5, 1.5, 1.5]), length_scale=np.array([533.0, 533.0, 533.0]))
+
+
+def dryden_medium_altitude_moderate():  # 600 m
+    return Turbulence(sigma=np.array([3.0, 3.0, 3.0]), length_scale=np.array([533.0, 533.0, 533.0]))
 
 
 def aerosonde():

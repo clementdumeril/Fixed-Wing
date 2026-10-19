@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .airplane import THROTTLE, Parameters
-from .operations import wind
+from .operations import local_wind
 from .trim import trim
 
 
@@ -35,7 +35,7 @@ STRIX_REFERENCE = [
 
 
 def _air_velocity(parameters: Parameters, state):
-    return state.linear_velocity - wind(parameters, state.position)
+    return state.linear_velocity - local_wind(parameters, state)
 
 
 def level_flight_throttle(parameters: Parameters, airspeed) -> float:

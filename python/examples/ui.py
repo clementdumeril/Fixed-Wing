@@ -9,7 +9,7 @@ import json
 import numpy as np
 import websockets
 
-from fixed_wing.airplane.airplane import AILERON, ELEVATOR, THROTTLE
+from fixed_wing.airplane.airplane import AILERON, ELEVATOR, THROTTLE, Thermals
 from fixed_wing.airplane.operations import normalize_action, step
 from fixed_wing.airplane.parameters import aerosonde
 from fixed_wing.airplane.trim import trim
@@ -22,6 +22,8 @@ WIND = np.array([0.0, 4.0, 0.0])
 GUST = np.array([0.0, 0.0, 6.0])  # updraft
 GUST_START = 375.0  # m along x, reached after about 15 s at 25 m/s
 GUST_LENGTH = 50.0  # m, about 2 s to cross
+# one Allen thermal on the glide path, crossed at about t = 32 s (outer radius about 53 m at 75 m of height)
+THERMAL_CENTER = np.array([780.0, 39.0])
 
 
 def scripted_action(trimmed_actuators, t):
@@ -44,6 +46,7 @@ async def main():
     parameters.disturbances.gust = GUST
     parameters.disturbances.gust_start = GUST_START
     parameters.disturbances.gust_length = GUST_LENGTH
+    parameters.disturbances.thermals = Thermals(centers=THERMAL_CENTER[None], w_gain=np.ones(1), r_gain=np.ones(1))
     dt = parameters.integration.dt
     async with websockets.connect("ws://localhost:13337/backend") as websocket:
         handshake = json.loads(await websocket.recv())

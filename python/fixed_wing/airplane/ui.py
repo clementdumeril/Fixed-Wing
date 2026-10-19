@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from .airplane import Parameters, State
-from .operations import air_data, specific_energy, wind
+from .operations import air_data, local_wind, specific_energy
 
 
 def _json(value):
@@ -47,7 +47,7 @@ def set_state_action_message(parameters: Parameters, state: State, action, names
     state_json = _json(asdict(state))
     state_json["air_data"] = {"airspeed": float(airspeed), "alpha": float(alpha), "beta": float(beta)}
     state_json["specific_energy"] = float(specific_energy(parameters, state))
-    state_json["wind"] = _json(wind(parameters, state.position))  # local wind, gust included
+    state_json["wind"] = _json(local_wind(parameters, state))  # local wind: gust, thermals and turbulence included
     return json.dumps({
         "namespace": namespace,
         "channel": "setState",
