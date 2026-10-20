@@ -38,7 +38,9 @@ def test_initial_state_keeps_trim_air_data():
     _, airspeed, alpha, beta = air_data(parameters, state)
     assert config.airspeed_range[0] <= airspeed <= config.airspeed_range[1]
     assert 0 < alpha < config.alpha_range[1] and np.isclose(beta, 0, atol=1e-9)
-    assert abs(setpoint.altitude - config.initial_altitude) <= config.altitude_change_max
+    assert abs(setpoint.altitude - state.position[2]) <= config.altitude_change_max
+    assert config.altitude_range[0] <= state.position[2] <= config.altitude_range[1]
+    assert config.altitude_range[0] <= setpoint.altitude <= config.altitude_range[1]
     assert terminated(parameters, state, setpoint, config) is None
 
 

@@ -43,11 +43,13 @@ class EnvConfig:
     n_substeps: int = 2  # RK4 steps per control period
     latency_steps: int = 1  # control periods between a command and its application
     episode_seconds: float = 30.0
-    initial_altitude: float = 100.0  # m
+    # m above ground, where the lab flies the Strix: glides from 120 m (Morando et al. 2026), 50 to 120 m above the
+    # terrain (Lim & Loianno 2026); 120 m is also about the FAA Part 107 limit (400 ft). Start and setpoint stay inside.
+    altitude_range: tuple = (50.0, 120.0)
 
     # setpoint, constant over an episode
     airspeed_range: tuple = (20.0, 30.0)  # m/s, Aerosonde scale (trim alpha 10 deg at 20 m/s)
-    altitude_change_max: float = 20.0  # m, setpoint = initial altitude +- this
+    altitude_change_max: float = 20.0  # m, setpoint = initial altitude +- this, kept inside altitude_range
     course_change_max: float = np.deg2rad(90)  # setpoint = initial course +- this
 
     # initial state: trim at a random airspeed, then attitude and rate perturbations
@@ -65,6 +67,7 @@ class EnvConfig:
     alpha_range: tuple = (np.deg2rad(-10), np.deg2rad(15))  # the linear aerodynamics have no stall
     airspeed_limits: tuple = (15.0, 40.0)  # m/s
     altitude_error_max: float = 50.0  # m
+    altitude_floor: float = 20.0  # m, below it the safety pilot takes over
 
     # domain randomization: every factor uniform in [1 - r, 1 + r]
     randomization: float = 0.0
@@ -129,7 +132,7 @@ def sample_initial_parameters(rng, config: EnvConfig, nominal: Parameters = None
     if config.turbulence is not None:
         disturbances.turbulence = copy.deepcopy(config.turbulence)
     if config.thermals:
-        disturbances.thermals = sample_thermals(rng, 2000.0, 2000.0, config.initial_altitude)
+        disturbances.thermals = sample_thermals(rng, 2000.0, 2000.0, np.mean(config.altitude_range))
     return parameters, randomization
 
 
@@ -157,7 +160,7 @@ def sample_initial_state(rng, parameters: Parameters, config: EnvConfig):
         pitch + rng.uniform(-config.pitch_max, config.pitch_max),
         course,
     )
-    position = np.array([0.0, 0.0, config.initial_altitude])
+    position = np.array([0.0, 0.0, rng.uniform(*config.altitude_range)])
     state = State(
         position=position,
         orientation=orientation,
@@ -169,7 +172,7 @@ def sample_initial_state(rng, parameters: Parameters, config: EnvConfig):
         state.turbulence = sample_turbulence(rng)
     setpoint = Setpoint(
         airspeed=rng.uniform(*config.airspeed_range),
-        altitude=config.initial_altitude + rng.uniform(-config.altitude_change_max, config.altitude_change_max),
+        altitude=np.clip(position[2] + rng.uniform(-config.altitude_change_max, config.altitude_change_max), *config.altitude_range),
         course=wrap(course + rng.uniform(-config.course_change_max, config.course_change_max)),
     )
     return state, setpoint
@@ -248,8 +251,8 @@ def terminated(parameters, state, setpoint, config: EnvConfig):
     """Returns the reason the flight is over, or None. The time limit is a truncation, handled by the caller."""
     if not np.all(np.isfinite(state.linear_velocity)):
         return "diverged"
-    if state.position[2] < 0:
-        return "ground"
+    if state.position[2] < config.altitude_floor:
+        return "low_altitude"
     _, airspeed, alpha, _ = air_data(parameters, state)
     if not config.alpha_range[0] <= alpha <= config.alpha_range[1]:
         return "alpha"

@@ -45,7 +45,7 @@ Same pieces as the L2F environment, rewritten for the airplane task: hold an air
   factors, for an asymmetric actor-critic.
 - `reward`: survival bonus minus a quadratic cost, capped at half the bonus: every step in flight earns something, so ending the episode never
   pays (L2F's survival bonus against "learning to terminate").
-- `terminated`: ground, airspeed limits, altitude error, and α outside [−10°, 15°] since the model has no stall.
+- `terminated`: below 20 m (the safety pilot takes over), airspeed limits, altitude error, and α outside [−10°, 15°] since the model has no stall. Start and setpoint altitudes stay within 50–120 m, where the lab flies the Strix.
   The time limit is a truncation.
 - `FixedWingEnv`: Gymnasium wrapper (`pip install -e ".[rl]"`). `evaluate` runs any controller on the same scenarios.
 - `pid.py`: PID baseline (successive loop closure, Beard & McLain chapter 6), using the same measurements as the actor.

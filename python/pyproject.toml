@@ -12,7 +12,7 @@ dependencies = ["numpy"]
 [project.optional-dependencies]
 dev = ["pytest"]
 ui = ["ui-server", "websockets"]
-rl = ["gymnasium"]
+rl = ["gymnasium", "stable-baselines3"]
 
 [tool.setuptools.packages.find]
 include = ["fixed_wing*"]
