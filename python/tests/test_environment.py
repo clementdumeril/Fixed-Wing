@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -136,3 +138,11 @@ def test_pid_holds_the_setpoint(seed):
         done = term or trunc
     assert not term
     assert abs(info["airspeed_error"]) < 1.0 and abs(info["altitude_error"]) < 3.0 and abs(info["course_error"]) < np.deg2rad(5)
+
+
+@pytest.mark.parametrize("config", [EnvConfig(), EnvConfig(privileged_observation=True), EnvConfig(airspeed_sensor=False, action_history=0)])
+def test_gymnasium_checker(config):
+    env_checker = pytest.importorskip("gymnasium.utils.env_checker")
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*Box observation space (minimum|maximum) value is")  # unbounded on purpose
+        env_checker.check_env(FixedWingEnv(config), skip_render_check=True)

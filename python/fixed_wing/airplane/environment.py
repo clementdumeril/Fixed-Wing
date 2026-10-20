@@ -299,7 +299,10 @@ class FixedWingEnv(gymnasium.Env if gymnasium else object):
         return dict(airspeed_error=e_airspeed, altitude_error=e_altitude, course_error=e_course, **extra)
 
     def reset(self, seed=None, options=None):
-        if seed is not None:
+        if gymnasium is not None:
+            super().reset(seed=seed)  # seeds self.np_random, as Gymnasium expects
+            self.rng = self.np_random
+        elif seed is not None:
             self.rng = np.random.default_rng(seed)
         self.parameters, self.randomization = sample_initial_parameters(self.rng, self.config, self.nominal)
         self.state, self.setpoint = sample_initial_state(self.rng, self.parameters, self.config)
