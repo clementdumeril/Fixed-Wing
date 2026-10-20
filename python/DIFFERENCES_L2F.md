@@ -33,10 +33,24 @@ Wind is subtracted from the ground velocity (v_air = v − wind), so it acts thr
 - Integration substeps as in L2F (`integration.n_substeps`).
 - 25 airplane tests, including the Allen check case and the Dryden statistics.
 
-## 4. Not ported yet (needed for closed-loop RL)
+## 4. RL environment (`environment.py`)
 
-Observation, reward, termination, parameter and initial-state randomization, action noise, state clamps
-(`STATE_LIMIT_*`) and the closed-form motor model. So there is no closed-loop controller yet.
+Same pieces as the L2F environment, rewritten for the airplane task: hold an airspeed, an altitude and a course.
+
+- `sample_initial_parameters`: domain randomization, every factor uniform in [1 − r, 1 + r] (mass, inertia, thrust,
+  actuator time constants, the 28 coefficients), plus optional wind, turbulence and thermals.
+- `sample_initial_state`: trim at a random airspeed, then attitude and rate perturbations; the setpoint.
+- `observe_actor`: only what PX4 estimates (errors to the setpoint, rotation matrix, rates, body velocity, airspeed if
+  there is a Pitot tube, past actions). `observe_critic` adds α, β, the true wind, the actuators and the randomization
+  factors, for an asymmetric actor-critic.
+- `reward`: survival bonus minus a quadratic cost, capped at half the bonus: every step in flight earns something, so ending the episode never
+  pays (L2F's survival bonus against "learning to terminate").
+- `terminated`: ground, airspeed limits, altitude error, and α outside [−10°, 15°] since the model has no stall.
+  The time limit is a truncation.
+- `FixedWingEnv`: Gymnasium wrapper (`pip install -e ".[rl]"`). `evaluate` runs any controller on the same scenarios.
+- `pid.py`: PID baseline (successive loop closure, Beard & McLain chapter 6), using the same measurements as the actor.
+
+Not ported: the closed-form motor model and the state clamps (`STATE_LIMIT_*`).
 
 ## 5. Simplifications to revisit
 

@@ -4,6 +4,8 @@ A NumPy port of the structure of the
 [L2F simulator](https://github.com/rl-tools/rl-tools/tree/master/include/rl_tools/rl/environments/l2f)
 with fixed-wing physics in `fixed_wing/airplane/` (aerodynamics, actuator lag, trim, wind with gusts, thermals and turbulence). `fixed_wing/multirotor/` is the L2F quadrotor core, which I used to check the skeleton.
 
+`fixed_wing/airplane/environment.py` is the RL task (hold an airspeed, an altitude and a course) and `pid.py` its PID baseline.
+
 [DIFFERENCES_L2F.md](DIFFERENCES_L2F.md) lists what changed from L2F.
 [PARAMETERS.md](PARAMETERS.md) gives the source of every parameter.
 

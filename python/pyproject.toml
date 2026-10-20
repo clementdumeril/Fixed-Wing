@@ -12,6 +12,7 @@ dependencies = ["numpy"]
 [project.optional-dependencies]
 dev = ["pytest"]
 ui = ["ui-server", "websockets"]
+rl = ["gymnasium"]
 
 [tool.setuptools.packages.find]
 include = ["fixed_wing*"]

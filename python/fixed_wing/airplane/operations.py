@@ -109,6 +109,8 @@ def turbulence_velocity(parameters: Parameters, state: State):
 
 def local_wind(parameters: Parameters, state: State):
     # world frame: everything the airplane feels, turbulence included
+    if not np.any(parameters.disturbances.turbulence.sigma):
+        return wind(parameters, state.position)
     return wind(parameters, state.position) + rotate_vector_by_quaternion(state.orientation, turbulence_velocity(parameters, state))
 
 
@@ -189,6 +191,11 @@ def airplane_aerodynamics(parameters: Parameters, state: State):
     return FRD_FLU @ force, FRD_FLU @ moment
 
 
+def _cross(a, b):
+    # np.cross is slow on 3-vectors
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
+
+
 def airplane_dynamics(parameters: Parameters, state: State, action) -> State:
     # action: commanded actuator positions, same units as State.actuators
     d = parameters.dynamics
@@ -197,7 +204,7 @@ def airplane_dynamics(parameters: Parameters, state: State, action) -> State:
         position=state.linear_velocity,
         orientation=quaternion_derivative(state.orientation, state.angular_velocity),
         linear_velocity=rotate_vector_by_quaternion(state.orientation, force) / d.mass + d.gravity,
-        angular_velocity=d.J_inv @ (moment - np.cross(state.angular_velocity, d.J @ state.angular_velocity)),
+        angular_velocity=d.J_inv @ (moment - _cross(state.angular_velocity, d.J @ state.angular_velocity)),
         actuators=(action - state.actuators) / d.actuator_time_constants,
         action_buffer=np.zeros_like(state.action_buffer),  # discrete, updated in step
         turbulence=np.zeros_like(state.turbulence),  # discrete, updated in step
