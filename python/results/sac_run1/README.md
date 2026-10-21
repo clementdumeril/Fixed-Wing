@@ -34,7 +34,7 @@ RMS errors over the second half of each flight. Raw numbers: `evaluation.json`.
 | SAC after 500 000 steps | 85 | 15 |
 | SAC after 1 000 000 steps (checkpoint) | 97 | 3 |
 
-Not monotonic: the 500 000-step policy is slightly less robust than the 100 000-step one. The 1 000 000-step
+Not monotonic: the 500 000-step policy completes slightly fewer flights than the 100 000-step one. The 1 000 000-step
 checkpoint and the final `model.zip` (98 / 100) are saved a few steps apart.
 
 ## Files

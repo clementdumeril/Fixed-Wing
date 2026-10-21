@@ -7,6 +7,7 @@ with fixed-wing physics in `fixed_wing/airplane/` (aerodynamics, actuator lag, t
 `fixed_wing/airplane/environment.py` is the RL task (hold an airspeed, an altitude and a course) and `pid.py` its PID baseline.
 `examples/train_sac.py` trains SAC with an asymmetric actor-critic and the L2F reward curriculum; [savio/README.md](savio/README.md) runs it on Savio.
 `examples/plot_training.py`, `compare_flights.py` (RL against PID over time), `make_videos.py` and `make_3d_videos.py` (GIFs), `ui_policy.py` and `ui_fleet.py` (live 3D viewer, one or many airplanes) show the results.
+`examples/reward_saturation.py` checks a reward before a long run (how often it is nearly flat under exploration noise).
 Results of the first run: [results/sac_run1](results/sac_run1/README.md).
 
 [DIFFERENCES_L2F.md](DIFFERENCES_L2F.md) lists what changed from L2F.
