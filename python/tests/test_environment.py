@@ -7,9 +7,12 @@ from fixed_wing.airplane.airplane import ELEVATOR
 from fixed_wing.airplane.environment import (
     EnvConfig,
     FixedWingEnv,
+    RewardConfig,
+    RewardCurriculum,
     euler_quaternion,
     measurements,
     reward,
+    reward_from_observations,
     sample_initial_parameters,
     sample_initial_state,
     terminated,
@@ -148,3 +151,39 @@ def test_gymnasium_checker(config):
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*Box observation space (minimum|maximum) value is")  # unbounded on purpose
         env_checker.check_env(FixedWingEnv(config), skip_render_check=True)
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_reward_recomputed_from_observations(privileged):
+    # the replay buffer recomputation gives the reward the environment returned, with the same weights or new ones
+    config = EnvConfig(privileged_observation=privileged)
+    env = FixedWingEnv(config)
+    observation, _ = env.reset(seed=7)
+    rng = np.random.default_rng(0)
+    stored = []
+    for _ in range(200):
+        action = np.clip(env.previous_action + 0.05 * rng.standard_normal(4), -1, 1)
+        next_observation, r, term, trunc, info = env.step(action)
+        stored.append((observation, next_observation, action, term, r))
+        observation = next_observation
+        if term or trunc:
+            break
+    part = (lambda o: o["critic"]) if privileged else (lambda o: o)
+    o, o2 = np.array([part(t[0]) for t in stored]), np.array([part(t[1]) for t in stored])
+    actions, terms, rewards = np.array([t[2] for t in stored]), np.array([t[3] for t in stored]), np.array([t[4] for t in stored])
+    assert np.allclose(reward_from_observations(o, o2, actions, terms, config), rewards, atol=1e-4)
+    harder = RewardCurriculum().target
+    assert np.all(reward_from_observations(o, o2, actions, terms, config, harder) <= rewards + 1e-9)
+
+
+def test_curriculum():
+    curriculum = RewardCurriculum()
+    assert curriculum.at(0) == curriculum.initial
+    assert curriculum.at(curriculum.period * curriculum.n_stages) == curriculum.at(10 ** 9)
+    assert curriculum.at(10 ** 9).course_weight == pytest.approx(curriculum.target.course_weight)
+    weights = [curriculum.at(k * curriculum.period).action_change_weight for k in range(curriculum.n_stages + 1)]
+    assert np.all(np.diff(weights) > 0)  # grows at every stage
+    assert curriculum.at(curriculum.period - 1) == curriculum.initial  # changes only every period
+    env = FixedWingEnv(EnvConfig())
+    env.set_reward(curriculum.at(10 ** 9))
+    assert env.config.reward.course_weight == pytest.approx(2.7)

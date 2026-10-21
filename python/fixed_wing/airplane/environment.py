@@ -4,7 +4,7 @@ Same pieces as the L2F environment (sample_initial_parameters, sample_initial_st
 plus a Gymnasium wrapper, FixedWingEnv. Every design choice is a field of EnvConfig.
 """
 import copy
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 
 import numpy as np
 
@@ -235,16 +235,69 @@ def observe_critic(parameters, state, setpoint, action_history, randomization: R
     return np.concatenate((actor, privileged)).astype(np.float32)
 
 
-def reward(parameters, state, setpoint, action, previous_action, config: EnvConfig):
-    c = config.reward
-    e_airspeed, e_altitude, e_course = errors(measurements(parameters, state, config), setpoint)
+def reward_from_errors(e_airspeed, e_altitude, e_course, action_change_squared, c: RewardConfig):
+    # works on scalars and on arrays (replay buffer recomputation, see reward_from_observations)
     cost = (
         c.airspeed_weight * (e_airspeed / c.airspeed_scale) ** 2
         + c.altitude_weight * (e_altitude / c.altitude_scale) ** 2
         + c.course_weight * (e_course / c.course_scale) ** 2
-        + c.action_change_weight * np.sum((np.asarray(action) - previous_action) ** 2)
+        + c.action_change_weight * action_change_squared
     )
-    return c.survival - min(cost, c.cost_cap * c.survival), cost
+    return c.survival - np.minimum(cost, c.cost_cap * c.survival), cost
+
+
+def reward(parameters, state, setpoint, action, previous_action, config: EnvConfig):
+    e_airspeed, e_altitude, e_course = errors(measurements(parameters, state, config), setpoint)
+    change = np.sum((np.asarray(action) - previous_action) ** 2)
+    return reward_from_errors(e_airspeed, e_altitude, e_course, change, config.reward)
+
+
+def actor_observation_size(config: EnvConfig):
+    return 19 + config.airspeed_sensor + 4 * config.action_history
+
+
+def reward_from_observations(observation, next_observation, action, terminated_, config: EnvConfig, reward_config=None):
+    """The reward of stored transitions, recomputed from the observations with new weights (L2F recomputes the
+    replay buffer after each curriculum change, p. 6).
+
+    Observations are actor or critic observations (the critic one starts with the noise-free actor one), batched on
+    the first axis. Needs action_history >= 1: the previous action is the last one in the observation history.
+    """
+    if config.action_history < 1:
+        raise ValueError("the previous action is read from the action history")
+    n = actor_observation_size(config)
+    previous_action = observation[:, n - 4:n]
+    e_airspeed = next_observation[:, 0] * 5
+    e_altitude = next_observation[:, 1] * 20
+    e_course = np.arctan2(next_observation[:, 2], next_observation[:, 3])
+    change = np.sum((action - previous_action) ** 2, axis=1)
+    r, _ = reward_from_errors(e_airspeed, e_altitude, e_course, change, reward_config or config.reward)
+    return np.where(terminated_, 0.0, r)
+
+
+@dataclass
+class RewardCurriculum:
+    """L2F curriculum (p. 4): the reward weights grow from initial to target every period steps, then stay.
+
+    Here the growth is geometric over n_stages stages, so each weight is multiplied by the same factor at each stage.
+    """
+    initial: RewardConfig = field(default_factory=RewardConfig)
+    target: RewardConfig = field(default_factory=lambda: RewardConfig(
+        airspeed_weight=1.2,  # = scale 1 m/s
+        altitude_weight=1.2,  # = scale 5 m
+        course_weight=2.7,  # = scale 10 deg
+        action_change_weight=50.0,  # smooth commands
+    ))
+    period: int = 100_000
+    n_stages: int = 5
+
+    def at(self, step):
+        x = min(step // self.period, self.n_stages) / self.n_stages
+        weights = {}
+        for name in ("airspeed_weight", "altitude_weight", "course_weight", "action_change_weight"):
+            a, b = getattr(self.initial, name), getattr(self.target, name)
+            weights[name] = a * (b / a) ** x
+        return replace(self.initial, **weights)
 
 
 def terminated(parameters, state, setpoint, config: EnvConfig):
@@ -285,6 +338,10 @@ class FixedWingEnv(gymnasium.Env if gymnasium else object):
             self.observation_space = spaces.Dict({"actor": actor, "critic": critic})
         else:
             self.observation_space = actor
+
+    def set_reward(self, reward_config: RewardConfig):
+        # for the curriculum, called through VecEnv.env_method in the training processes
+        self.config.reward = reward_config
 
     def _actor(self):
         return observe_actor(self.parameters, self.state, self.setpoint, self.action_history, self.config, self.rng)

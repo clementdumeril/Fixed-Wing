@@ -4,6 +4,8 @@ python examples/train_sac.py --steps 1000000 --seed 0 --n-envs 8 --out runs/sac_
 
 Writes to --out: config.json, progress.csv (learning curves), checkpoints/, model.zip, evaluation.json.
 Training scenarios use seeds from 10 000 up, so they never coincide with the test scenarios.
+The reward weights follow the L2F curriculum (RewardCurriculum) unless --no-curriculum. The evaluation always uses
+the initial weights, the same reward as examples/pid_baseline.py, so the returns stay comparable.
 """
 import argparse
 import json
@@ -18,8 +20,8 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
-from fixed_wing.airplane.asymmetric_sac import AsymmetricSACPolicy, SB3Policy
-from fixed_wing.airplane.environment import EnvConfig, FixedWingEnv, evaluate
+from fixed_wing.airplane.asymmetric_sac import AsymmetricSACPolicy, CurriculumCallback, SB3Policy
+from fixed_wing.airplane.environment import EnvConfig, FixedWingEnv, RewardCurriculum, evaluate
 
 
 def main():
@@ -30,6 +32,7 @@ def main():
     parser.add_argument("--threads", type=int, default=1, help="torch threads")
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--eval-episodes", type=int, default=100)
+    parser.add_argument("--no-curriculum", action="store_true", help="constant reward weights (the first run)")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
@@ -62,11 +65,10 @@ def main():
     model.set_logger(configure(str(args.out), ["stdout", "csv"]))
 
     start = time.time()
-    model.learn(
-        total_timesteps=args.steps,
-        callback=CheckpointCallback(save_freq=max(100_000 // args.n_envs, 1), save_path=str(args.out / "checkpoints")),
-        log_interval=10,
-    )
+    callbacks = [CheckpointCallback(save_freq=max(100_000 // args.n_envs, 1), save_path=str(args.out / "checkpoints"))]
+    if not args.no_curriculum:
+        callbacks.append(CurriculumCallback(RewardCurriculum(), config))
+    model.learn(total_timesteps=args.steps, callback=callbacks, log_interval=10)
     model.save(args.out / "model")
     training_seconds = time.time() - start
 

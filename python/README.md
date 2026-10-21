@@ -5,7 +5,8 @@ A NumPy port of the structure of the
 with fixed-wing physics in `fixed_wing/airplane/` (aerodynamics, actuator lag, trim, wind with gusts, thermals and turbulence). `fixed_wing/multirotor/` is the L2F quadrotor core, which I used to check the skeleton.
 
 `fixed_wing/airplane/environment.py` is the RL task (hold an airspeed, an altitude and a course) and `pid.py` its PID baseline.
-`examples/train_sac.py` trains SAC with an asymmetric actor-critic; [savio/README.md](savio/README.md) runs it on Savio.
+`examples/train_sac.py` trains SAC with an asymmetric actor-critic and the L2F reward curriculum; [savio/README.md](savio/README.md) runs it on Savio.
+`examples/plot_training.py`, `compare_flights.py` (RL against PID over time) and `ui_policy.py` (3D) show the results.
 
 [DIFFERENCES_L2F.md](DIFFERENCES_L2F.md) lists what changed from L2F.
 [PARAMETERS.md](PARAMETERS.md) gives the source of every parameter.
