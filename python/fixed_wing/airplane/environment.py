@@ -11,7 +11,7 @@ import numpy as np
 from ..quaternion_helper import quaternion_multiply, quaternion_to_rotation_matrix, rotate_vector_by_quaternion_inverse
 from .airplane import Parameters, State, Turbulence
 from .operations import air_data, local_wind, normalize_action, sample_thermals, sample_turbulence, step, wind
-from .parameters import aerosonde
+from .parameters import aerosonde, dryden_low_altitude_light, dryden_low_altitude_moderate
 from .trim import trim
 
 try:
@@ -35,6 +35,11 @@ class RewardConfig:
     altitude_weight: float = 0.3
     course_weight: float = 0.3
     action_change_weight: float = 0.1  # on |a_t - a_t-1|^2, normalized actions: smooth commands, servo wear
+    # coordinated flight: without these two terms the first SAC run flew straight in a 9 deg sideslip, banked 25 deg
+    # with crossed aileron and rudder (results/sac_run1)
+    sideslip_scale: float = np.deg2rad(5)
+    sideslip_weight: float = 0.1
+    trim_weight: float = 0.05  # on |a_t - a_trim|^2, a_trim = steady flight at the setpoint airspeed (L2F: |a - C_rab|^2)
 
 
 @dataclass
@@ -93,6 +98,7 @@ class Setpoint:
     airspeed: float
     altitude: float
     course: float  # rad, direction of the ground velocity, counterclockwise from world x
+    trim_action: np.ndarray = None  # normalized commands of steady level flight at the setpoint airspeed
 
 
 @dataclass
@@ -175,6 +181,7 @@ def sample_initial_state(rng, parameters: Parameters, config: EnvConfig):
         altitude=np.clip(position[2] + rng.uniform(-config.altitude_change_max, config.altitude_change_max), *config.altitude_range),
         course=wrap(course + rng.uniform(-config.course_change_max, config.course_change_max)),
     )
+    setpoint.trim_action = normalize_action(parameters, trim(parameters, setpoint.airspeed).actuators)  # of this airplane
     return state, setpoint
 
 
@@ -231,25 +238,30 @@ def observe_critic(parameters, state, setpoint, action_history, randomization: R
         local_wind(parameters, state) / 10,
         normalize_action(parameters, state.actuators),
         randomization.vector() / 0.3,
+        setpoint.trim_action,  # last: reward_from_observations reads it there
     ))
     return np.concatenate((actor, privileged)).astype(np.float32)
 
 
-def reward_from_errors(e_airspeed, e_altitude, e_course, action_change_squared, c: RewardConfig):
+def reward_from_errors(e_airspeed, e_altitude, e_course, beta, action_change_squared, trim_deviation_squared, c: RewardConfig):
     # works on scalars and on arrays (replay buffer recomputation, see reward_from_observations)
     cost = (
         c.airspeed_weight * (e_airspeed / c.airspeed_scale) ** 2
         + c.altitude_weight * (e_altitude / c.altitude_scale) ** 2
         + c.course_weight * (e_course / c.course_scale) ** 2
+        + c.sideslip_weight * (beta / c.sideslip_scale) ** 2
         + c.action_change_weight * action_change_squared
+        + c.trim_weight * trim_deviation_squared
     )
     return c.survival - np.minimum(cost, c.cost_cap * c.survival), cost
 
 
 def reward(parameters, state, setpoint, action, previous_action, config: EnvConfig):
     e_airspeed, e_altitude, e_course = errors(measurements(parameters, state, config), setpoint)
+    _, _, _, beta = air_data(parameters, state)  # the reward may use what the actor does not observe
     change = np.sum((np.asarray(action) - previous_action) ** 2)
-    return reward_from_errors(e_airspeed, e_altitude, e_course, change, config.reward)
+    deviation = np.sum((np.asarray(action) - setpoint.trim_action) ** 2)
+    return reward_from_errors(e_airspeed, e_altitude, e_course, beta, change, deviation, config.reward)
 
 
 def actor_observation_size(config: EnvConfig):
@@ -260,19 +272,28 @@ def reward_from_observations(observation, next_observation, action, terminated_,
     """The reward of stored transitions, recomputed from the observations with new weights (L2F recomputes the
     replay buffer after each curriculum change, p. 6).
 
-    Observations are actor or critic observations (the critic one starts with the noise-free actor one), batched on
-    the first axis. Needs action_history >= 1: the previous action is the last one in the observation history.
+    Observations are critic observations (the noise-free actor observation, then the privileged part with the
+    sideslip and the trim commands), batched on the first axis. Needs action_history >= 1: the previous action is the
+    last one in the observation history.
     """
     if config.action_history < 1:
         raise ValueError("the previous action is read from the action history")
     n = actor_observation_size(config)
+    if observation.shape[1] <= n:
+        raise ValueError("needs the critic observation (privileged_observation=True): sideslip and trim commands")
     previous_action = observation[:, n - 4:n]
+    trim_action = observation[:, -4:]
     e_airspeed = next_observation[:, 0] * 5
     e_altitude = next_observation[:, 1] * 20
     e_course = np.arctan2(next_observation[:, 2], next_observation[:, 3])
+    beta = next_observation[:, n + 1] * 0.3
     change = np.sum((action - previous_action) ** 2, axis=1)
-    r, _ = reward_from_errors(e_airspeed, e_altitude, e_course, change, reward_config or config.reward)
+    deviation = np.sum((action - trim_action) ** 2, axis=1)
+    r, _ = reward_from_errors(e_airspeed, e_altitude, e_course, beta, change, deviation, reward_config or config.reward)
     return np.where(terminated_, 0.0, r)
+
+
+WEIGHTS = ("airspeed_weight", "altitude_weight", "course_weight", "sideslip_weight", "action_change_weight", "trim_weight")
 
 
 @dataclass
@@ -287,6 +308,8 @@ class RewardCurriculum:
         altitude_weight=1.2,  # = scale 5 m
         course_weight=2.7,  # = scale 10 deg
         action_change_weight=50.0,  # smooth commands
+        sideslip_weight=1.0,  # 5 deg of sideslip costs 1
+        trim_weight=0.3,
     ))
     period: int = 100_000
     n_stages: int = 5
@@ -294,7 +317,7 @@ class RewardCurriculum:
     def at(self, step):
         x = min(step // self.period, self.n_stages) / self.n_stages
         weights = {}
-        for name in ("airspeed_weight", "altitude_weight", "course_weight", "action_change_weight"):
+        for name in WEIGHTS:
             a, b = getattr(self.initial, name), getattr(self.target, name)
             weights[name] = a * (b / a) ** x
         return replace(self.initial, **weights)
@@ -425,3 +448,20 @@ def evaluate(policy, config: EnvConfig = None, seeds=range(100)):
         course_rmse_deg=float(np.rad2deg(np.mean(tracking[:, 2]))),
         mean_action_change=float(np.mean(smoothness)) if smoothness else np.nan,
     )
+
+
+TURBULENCE = {"none": None, "light": dryden_low_altitude_light, "moderate": dryden_low_altitude_moderate}
+
+
+def add_condition_arguments(parser):
+    """Flight conditions shared by training, evaluation and the PID baseline, so that they are compared alike."""
+    parser.add_argument("--wind-max", type=float, default=0.0, help="m/s, constant horizontal wind, random speed and direction")
+    parser.add_argument("--turbulence", choices=TURBULENCE, default="none", help="Dryden, low altitude")
+    parser.add_argument("--noise", type=float, default=0.0, help="sensor noise, multiplier on NOISE_STD")
+    parser.add_argument("--randomization", type=float, default=0.0, help="airplane parameters within +- this fraction")
+
+
+def config_from_arguments(args, **kwargs):
+    turbulence = TURBULENCE[args.turbulence]
+    return EnvConfig(wind_speed_max=args.wind_max, turbulence=turbulence() if turbulence else None,
+                     observation_noise=args.noise, randomization=args.randomization, **kwargs)

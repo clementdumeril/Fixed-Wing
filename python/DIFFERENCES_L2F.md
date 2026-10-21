@@ -44,9 +44,13 @@ Same pieces as the L2F environment, rewritten for the airplane task: hold an air
   there is a Pitot tube, past actions). `observe_critic` adds α, β, the true wind, the actuators and the randomization
   factors, for an asymmetric actor-critic.
 - `reward`: survival bonus minus a quadratic cost, capped at half the bonus: every step in flight earns something, so ending the episode never
-  pays (L2F's survival bonus against "learning to terminate").
+  pays. The cost covers airspeed, altitude and course errors, sideslip, command changes and the distance of the commands
+  to the trim at the setpoint airspeed (L2F's |a − C_rab|²); the last two terms came after a first run that flew in a
+  sideslip with crossed controls (`results/sac_run1`). The reward may use what the actor does not observe (sideslip).
 - `terminated`: below 20 m (the safety pilot takes over), airspeed limits, altitude error, and α outside [−10°, 15°] since the model has no stall. Start and setpoint altitudes stay within 50–120 m, where the lab flies the Strix.
   The time limit is a truncation.
+- Flight conditions (`--wind-max`, `--turbulence`, `--noise`, `--randomization` in the scripts) are the same for
+  training, evaluation and the PID baseline.
 - `FixedWingEnv`: Gymnasium wrapper (`pip install -e ".[rl]"`). `evaluate` runs any controller on the same scenarios.
 - `pid.py`: PID baseline (successive loop closure, Beard & McLain chapter 6), using the same measurements as the actor.
 

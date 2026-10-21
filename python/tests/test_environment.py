@@ -12,6 +12,7 @@ from fixed_wing.airplane.environment import (
     euler_quaternion,
     measurements,
     reward,
+    actor_observation_size,
     reward_from_observations,
     sample_initial_parameters,
     sample_initial_state,
@@ -20,6 +21,11 @@ from fixed_wing.airplane.environment import (
 from fixed_wing.airplane.operations import air_data, normalize_action
 from fixed_wing.airplane.parameters import aerosonde, dryden_low_altitude_light
 from fixed_wing.airplane.pid import PIDController
+from fixed_wing.quaternion_helper import rotate_vector_by_quaternion
+
+
+def rotate(state, v):
+    return rotate_vector_by_quaternion(state.orientation, v)
 
 
 def test_euler_angles_round_trip():
@@ -54,7 +60,7 @@ def test_reward_is_highest_on_the_setpoint():
     state, setpoint = sample_initial_state(rng, parameters, config)
     m = measurements(parameters, state, config)
     setpoint.airspeed, setpoint.altitude, setpoint.course = m["airspeed"], m["altitude"], m["course"]
-    action = normalize_action(parameters, state.actuators)
+    action = setpoint.trim_action  # the initial state has no sideslip
     best, _ = reward(parameters, state, setpoint, action, action, config)
     assert best == config.reward.survival
     setpoint.altitude += 5
@@ -153,10 +159,10 @@ def test_gymnasium_checker(config):
         env_checker.check_env(FixedWingEnv(config), skip_render_check=True)
 
 
-@pytest.mark.parametrize("privileged", [False, True])
-def test_reward_recomputed_from_observations(privileged):
+def test_reward_recomputed_from_observations():
     # the replay buffer recomputation gives the reward the environment returned, with the same weights or new ones
-    config = EnvConfig(privileged_observation=privileged)
+    privileged = True
+    config = EnvConfig(privileged_observation=privileged, wind_speed_max=5.0, turbulence=dryden_low_altitude_light())
     env = FixedWingEnv(config)
     observation, _ = env.reset(seed=7)
     rng = np.random.default_rng(0)
@@ -187,3 +193,27 @@ def test_curriculum():
     env = FixedWingEnv(EnvConfig())
     env.set_reward(curriculum.at(10 ** 9))
     assert env.config.reward.course_weight == pytest.approx(2.7)
+
+
+def test_reward_needs_the_critic_observation():
+    config = EnvConfig()
+    o = np.zeros((3, actor_observation_size(config)))
+    with pytest.raises(ValueError):
+        reward_from_observations(o, o, np.zeros((3, 4)), np.zeros(3, bool), config)
+
+
+def test_sideslip_and_crossed_controls_cost():
+    # the crab of the first SAC run (results/sac_run1) is now penalized
+    config = EnvConfig()
+    rng = np.random.default_rng(2)
+    parameters, _ = sample_initial_parameters(rng, config)
+    state, setpoint = sample_initial_state(rng, parameters, config)
+    m = measurements(parameters, state, config)
+    setpoint.airspeed, setpoint.altitude, setpoint.course = m["airspeed"], m["altitude"], m["course"]
+    trimmed, _ = reward(parameters, state, setpoint, setpoint.trim_action, setpoint.trim_action, config)
+    crossed = setpoint.trim_action + np.array([-0.77, 0, 0.94, 0])
+    crab, _ = reward(parameters, state, setpoint, crossed, crossed, config)
+    assert crab < trimmed
+    state.linear_velocity = state.linear_velocity + 5 * rotate(state, np.array([0, 1.0, 0]))  # side velocity
+    slipping, _ = reward(parameters, state, setpoint, setpoint.trim_action, setpoint.trim_action, config)
+    assert slipping < trimmed

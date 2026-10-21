@@ -8,7 +8,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.sac.policies import SACPolicy
 
-from .environment import EnvConfig, RewardCurriculum, reward_from_observations
+from .environment import WEIGHTS, EnvConfig, RewardCurriculum, reward_from_observations
 
 
 class SelectKey(BaseFeaturesExtractor):
@@ -66,7 +66,7 @@ class CurriculumCallback(BaseCallback):
             self.current = reward_config
             self.training_env.env_method("set_reward", reward_config)
             self._recompute(reward_config)
-            for name in ("airspeed_weight", "altitude_weight", "course_weight", "action_change_weight"):
+            for name in WEIGHTS:
                 self.logger.record(f"curriculum/{name}", getattr(reward_config, name))
         return True
 

@@ -26,6 +26,7 @@ git pull   # if job files were edited by hand before: git checkout -- savio/ fir
 
 - Smoke test, a few minutes: `sbatch savio/smoke_test.slurm`
 - One training: `sbatch --array=0 savio/train_sac.slurm`; seeds 1 to 4: `sbatch --array=1-4 savio/train_sac.slurm`
+- Flight conditions, passed to `train_sac.py`: `sbatch --array=0-2 savio/train_sac.slurm --wind-max 5 --turbulence light --noise 1`
 - Follow: `squeue -u $USER`, `grep ep_len_mean runs/slurm-<job>_0.out | tail`
 - Result: `cat runs/sac_<job>_seed0/evaluation.json`, same metrics and test scenarios as `examples/pid_baseline.py`
 

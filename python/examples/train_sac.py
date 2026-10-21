@@ -4,7 +4,8 @@ python examples/train_sac.py --steps 1000000 --seed 0 --n-envs 8 --out runs/sac_
 
 Writes to --out: config.json, progress.csv (learning curves), checkpoints/, model.zip, evaluation.json.
 Training scenarios use seeds from 10 000 up, so they never coincide with the test scenarios.
-The reward weights follow the L2F curriculum (RewardCurriculum) unless --no-curriculum. The evaluation always uses
+Flight conditions: --wind-max, --turbulence, --noise, --randomization (default: calm air, exact sensors, nominal
+airplane). The reward weights follow the L2F curriculum (RewardCurriculum) unless --no-curriculum. The evaluation always uses
 the initial weights, the same reward as examples/pid_baseline.py, so the returns stay comparable.
 """
 import argparse
@@ -21,7 +22,9 @@ from stable_baselines3.common.logger import configure
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from fixed_wing.airplane.asymmetric_sac import AsymmetricSACPolicy, CurriculumCallback, SB3Policy
-from fixed_wing.airplane.environment import EnvConfig, FixedWingEnv, RewardCurriculum, evaluate
+from fixed_wing.airplane.environment import (
+    FixedWingEnv, RewardCurriculum, add_condition_arguments, config_from_arguments, evaluate,
+)
 
 
 def main():
@@ -34,11 +37,12 @@ def main():
     parser.add_argument("--eval-episodes", type=int, default=100)
     parser.add_argument("--no-curriculum", action="store_true", help="constant reward weights (the first run)")
     parser.add_argument("--out", type=Path, required=True)
+    add_condition_arguments(parser)
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(args.threads)
-    config = EnvConfig(privileged_observation=True)
+    config = config_from_arguments(args, privileged_observation=True)
     (args.out / "config.json").write_text(json.dumps({"args": vars(args), "env": asdict(config)}, indent=2, default=str))
 
     env = make_vec_env(
@@ -72,7 +76,8 @@ def main():
     model.save(args.out / "model")
     training_seconds = time.time() - start
 
-    results = evaluate(SB3Policy(model), EnvConfig(privileged_observation=True), seeds=range(args.eval_episodes))
+    # same flight conditions as the training, initial reward weights (those of examples/pid_baseline.py)
+    results = evaluate(SB3Policy(model), config_from_arguments(args, privileged_observation=True), seeds=range(args.eval_episodes))
     results["training_seconds"] = training_seconds
     (args.out / "evaluation.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2))
