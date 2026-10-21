@@ -20,16 +20,17 @@ def _json(value):
     return value
 
 
-def get_ui() -> str:
-    return (Path(__file__).parent / "ui.js").read_text(encoding="utf-8")
+def get_ui(module: str = "ui.js") -> str:
+    # ui.js: one airplane with its control surfaces; ui_fleet.js: many airplanes at once
+    return (Path(__file__).parent / module).read_text(encoding="utf-8")
 
 
-def set_ui_message(namespace: str) -> str:
+def set_ui_message(namespace: str, module: str = "ui.js") -> str:
     return json.dumps({
         "namespace": namespace,
         "channel": "setUI",
         "latch": True,
-        "data": {"type": "2d", "render_function": get_ui()},
+        "data": {"type": "2d", "render_function": get_ui(module)},
     })
 
 
