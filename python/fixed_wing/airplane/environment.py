@@ -23,9 +23,11 @@ except ImportError:  # optional: pip install -e ".[rl]"
 
 @dataclass
 class RewardConfig:
-    # reward = survival - min(cost, cost_cap * survival), with cost = sum of weight * (error / scale)^2.
-    # Every step in flight earns at least (1 - cost_cap) * survival, even far from the setpoint, so ending the episode
-    # never pays (L2F's survival bonus against "learning to terminate").
+    # reward = survival - cost_cap * survival * tanh(cost / (cost_cap * survival)), with cost = sum of
+    # weight * (error / scale)^2. Every step in flight earns at least (1 - cost_cap) * survival, even far from the
+    # setpoint, so ending the episode never pays (L2F's survival bonus against "learning to terminate"). The cap is
+    # smooth: with a hard min(cost, cap) the reward went flat on 98 % of the training steps once the curriculum raised
+    # the weights, and the policy stopped tracking the setpoint (Savio job 40282709).
     survival: float = 1.0
     cost_cap: float = 0.5
     airspeed_scale: float = 2.0  # m/s
@@ -253,7 +255,8 @@ def reward_from_errors(e_airspeed, e_altitude, e_course, beta, action_change_squ
         + c.action_change_weight * action_change_squared
         + c.trim_weight * trim_deviation_squared
     )
-    return c.survival - np.minimum(cost, c.cost_cap * c.survival), cost
+    cap = c.cost_cap * c.survival
+    return c.survival - cap * np.tanh(cost / cap), cost
 
 
 def reward(parameters, state, setpoint, action, previous_action, config: EnvConfig):
@@ -307,7 +310,7 @@ class RewardCurriculum:
         airspeed_weight=1.2,  # = scale 1 m/s
         altitude_weight=1.2,  # = scale 5 m
         course_weight=2.7,  # = scale 10 deg
-        action_change_weight=50.0,  # smooth commands
+        action_change_weight=1.0,  # SAC explores with noisy actions: a large weight saturates the cost on every step
         sideslip_weight=1.0,  # 5 deg of sideslip costs 1
         trim_weight=0.3,
     ))
