@@ -1,0 +1,15 @@
+{
+  "episodes": 100,
+  "success_rate": 0.98,
+  "mean_return": 1357.5574226296208,
+  "max_return": 1500.0,
+  "failures": {
+    "alpha": 1,
+    "low_altitude": 1
+  },
+  "airspeed_rmse": 0.1416380797980092,
+  "altitude_rmse": 0.872722262085988,
+  "course_rmse_deg": 8.189016175143657,
+  "mean_action_change": 0.008562943096615224,
+  "training_seconds": 9716.405288696289
+}
