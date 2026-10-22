@@ -3,6 +3,7 @@ airplane measures, and the critics read observation["critic"], which adds privil
 
 Needs pip install -e ".[rl]". Kept in the package (not in the training script) so that a saved model loads anywhere.
 """
+import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -52,22 +53,42 @@ class SB3Policy:
 
 class CurriculumCallback(BaseCallback):
     """Applies RewardCurriculum during training: sends the new weights to every environment and recomputes the
-    rewards already in the replay buffer, so that the critics learn one reward at a time (L2F, p. 4 and 6)."""
+    rewards already in the replay buffer, so that the critics learn one reward at a time (L2F, p. 4 and 6).
+
+    A stage is taken at the end of a period only if the mean course error over that period is below
+    curriculum.advance_course_error. The mean course error is logged as train/course_error_deg.
+    """
 
     def __init__(self, curriculum: RewardCurriculum, config: EnvConfig):
         super().__init__()
         self.curriculum = curriculum
         self.config = config
+        self.stage = 0
         self.current = None
+        self.error_sum = 0.0
+        self.error_count = 0
+        self.next_check = curriculum.period
 
     def _on_step(self):
-        reward_config = self.curriculum.at(self.num_timesteps)
+        for info in self.locals.get("infos", []):
+            if "course_error" in info:
+                self.error_sum += abs(info["course_error"])
+                self.error_count += 1
+        mean_error = self.error_sum / max(self.error_count, 1)
+        self.logger.record("train/course_error_deg", float(np.rad2deg(mean_error)))
+        if self.num_timesteps >= self.next_check:
+            if mean_error < self.curriculum.advance_course_error and self.stage < self.curriculum.n_stages:
+                self.stage += 1
+            self.next_check += self.curriculum.period
+            self.error_sum, self.error_count = 0.0, 0
+        reward_config = self.curriculum.at_stage(self.stage)
         if reward_config != self.current:
             self.current = reward_config
             self.training_env.env_method("set_reward", reward_config)
             self._recompute(reward_config)
-            for name in WEIGHTS:
-                self.logger.record(f"curriculum/{name}", getattr(reward_config, name))
+        self.logger.record("curriculum/stage", self.stage)
+        for name in WEIGHTS:
+            self.logger.record(f"curriculum/{name}", getattr(reward_config, name))
         return True
 
     def _recompute(self, reward_config):

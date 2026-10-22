@@ -42,6 +42,13 @@ class RewardConfig:
     sideslip_scale: float = np.deg2rad(5)
     sideslip_weight: float = 0.1
     trim_weight: float = 0.05  # on |a_t - a_trim|^2, a_trim = steady flight at the setpoint airspeed (L2F: |a - C_rab|^2)
+    # far field: linear in the errors and outside the tanh, so that getting closer always pays, even where the
+    # quadratic cost is saturated. Without it no run learned anything about the course for its first 300 000 steps.
+    # Each error counts up to its scale, so this term stays below 3 * far_weight and flying still always pays.
+    far_weight: float = 0.1
+    far_airspeed_scale: float = 10.0  # m/s
+    far_altitude_scale: float = 50.0  # m
+    far_course_scale: float = np.pi / 2
 
 
 @dataclass
@@ -255,8 +262,13 @@ def reward_from_errors(e_airspeed, e_altitude, e_course, beta, action_change_squ
         + c.action_change_weight * action_change_squared
         + c.trim_weight * trim_deviation_squared
     )
+    far = c.far_weight * (
+        np.minimum(np.abs(e_airspeed) / c.far_airspeed_scale, 1)
+        + np.minimum(np.abs(e_altitude) / c.far_altitude_scale, 1)
+        + np.minimum(np.abs(e_course) / c.far_course_scale, 1)
+    )
     cap = c.cost_cap * c.survival
-    return c.survival - cap * np.tanh(cost / cap), cost
+    return c.survival - cap * np.tanh(cost / cap) - far, cost
 
 
 def reward(parameters, state, setpoint, action, previous_action, config: EnvConfig):
@@ -301,9 +313,11 @@ WEIGHTS = ("airspeed_weight", "altitude_weight", "course_weight", "sideslip_weig
 
 @dataclass
 class RewardCurriculum:
-    """L2F curriculum (p. 4): the reward weights grow from initial to target every period steps, then stay.
+    """L2F curriculum (p. 4): the reward weights grow from initial to target in n_stages geometric stages.
 
-    Here the growth is geometric over n_stages stages, so each weight is multiplied by the same factor at each stage.
+    L2F moves to the next stage every 100 000 steps. Here a stage is taken only when the mean course error over the
+    last period is below advance_course_error (asymmetric_sac.CurriculumCallback): on a fixed schedule the weights
+    reached their target before the policy could turn, the reward went flat and the policies stopped tracking.
     """
     initial: RewardConfig = field(default_factory=RewardConfig)
     target: RewardConfig = field(default_factory=lambda: RewardConfig(
@@ -316,9 +330,14 @@ class RewardCurriculum:
     ))
     period: int = 100_000
     n_stages: int = 5
+    advance_course_error: float = np.deg2rad(15)
 
     def at(self, step):
-        x = min(step // self.period, self.n_stages) / self.n_stages
+        # fixed schedule, as in L2F
+        return self.at_stage(step // self.period)
+
+    def at_stage(self, stage):
+        x = min(stage, self.n_stages) / self.n_stages
         weights = {}
         for name in WEIGHTS:
             a, b = getattr(self.initial, name), getattr(self.target, name)

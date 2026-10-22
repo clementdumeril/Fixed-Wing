@@ -67,7 +67,8 @@ def test_reward_is_highest_on_the_setpoint():
     worse, _ = reward(parameters, state, setpoint, action, action, config)
     setpoint.altitude += 1000
     worst, _ = reward(parameters, state, setpoint, action, action, config)
-    assert best > worse > worst == (1 - config.reward.cost_cap) * config.reward.survival  # flying always pays
+    c = config.reward
+    assert best > worse > worst >= (1 - c.cost_cap) * c.survival - 3 * c.far_weight > 0  # flying always pays
 
 
 def test_randomization_scales_the_airplane():
@@ -179,7 +180,7 @@ def test_reward_recomputed_from_observations():
     actions, terms, rewards = np.array([t[2] for t in stored]), np.array([t[3] for t in stored]), np.array([t[4] for t in stored])
     assert np.allclose(reward_from_observations(o, o2, actions, terms, config), rewards, atol=1e-4)
     harder = RewardCurriculum().target
-    assert np.all(reward_from_observations(o, o2, actions, terms, config, harder) <= rewards + 1e-9)
+    assert np.all(reward_from_observations(o, o2, actions, terms, config, harder) <= rewards + 1e-4)  # float32 observations
 
 
 def test_curriculum():
@@ -217,3 +218,39 @@ def test_sideslip_and_crossed_controls_cost():
     state.linear_velocity = state.linear_velocity + 5 * rotate(state, np.array([0, 1.0, 0]))  # side velocity
     slipping, _ = reward(parameters, state, setpoint, setpoint.trim_action, setpoint.trim_action, config)
     assert slipping < trimmed
+
+
+def test_far_field_term_always_rewards_getting_closer():
+    # where the quadratic cost is saturated, a smaller error still earns more (the first runs had a flat reward there)
+    from fixed_wing.airplane.environment import reward_from_errors
+    c = RewardConfig()
+    rewards = [reward_from_errors(0.0, 0.0, np.deg2rad(e), 0.0, 0.0, 0.0, c)[0] for e in (90, 70, 50, 30)]
+    assert np.all(np.diff(rewards) > 0.005)
+    assert reward_from_errors(20.0, 200.0, np.pi, 0.5, 4.0, 4.0, c)[0] > 0  # still positive at the worst
+
+
+def test_curriculum_waits_for_tracking():
+    from fixed_wing.airplane.asymmetric_sac import CurriculumCallback
+    pytest.importorskip("stable_baselines3")
+    curriculum = RewardCurriculum(period=10)
+    callback = CurriculumCallback(curriculum, EnvConfig())
+
+    class Logger:
+        def record(self, *args):
+            pass
+
+    from types import SimpleNamespace as NS
+    env = NS(env_method=lambda *a: None)
+    callback.model = NS(logger=Logger(), get_env=lambda: env, replay_buffer=NS(full=False, pos=0))
+
+    def run(course_error, steps):
+        for _ in range(steps):
+            callback.num_timesteps += 1
+            callback.locals = {"infos": [{"course_error": course_error}]}
+            callback._on_step()
+
+    callback.num_timesteps = 0
+    run(np.deg2rad(60), 30)  # not tracking: no stage
+    assert callback.stage == 0
+    run(np.deg2rad(5), 30)  # tracking: one stage per period
+    assert callback.stage >= 2
