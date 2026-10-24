@@ -37,3 +37,15 @@ the networks dominate the run time (under 20 steps/s here); with Intel MKL on on
 about 60 steps/s with the Python network sizes and 600 steps/s with the L2F ones (`train_sac_small`: critic 64,
 batch 64). On Windows, `pip install mkl-devel` and `-DMKL_DIR=<venv>/Library/lib/cmake/mkl -DMKL_THREADING=sequential`
 work.
+
+## On Savio
+
+From `Fixed-Wing/cpp`, with the Python venv of [`python/savio`](../python/savio/README.md):
+
+```bash
+source savio/setup.sh          # login node: modules, Intel MKL in the venv, configure (downloads RLtools)
+sbatch savio/build.slurm       # compute node: compile, export the test scenarios, check against Python
+sbatch savio/sweep.slurm       # 6 critic x batch sizes x 3 seeds, one core each, 1 M steps in calm air
+```
+
+Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv` and `evaluation.json`.
