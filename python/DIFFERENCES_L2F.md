@@ -54,9 +54,12 @@ Same pieces as the L2F environment, rewritten for the airplane task: hold an air
 - `FixedWingEnv`: Gymnasium wrapper (`pip install -e ".[rl]"`). `evaluate` runs any controller on the same scenarios.
 - `pid.py`: PID baseline (successive loop closure, Beard & McLain chapter 6), using the same measurements as the actor.
 
-- Curriculum (`RewardCurriculum`, `asymmetric_sac.CurriculumCallback`): as in L2F, the reward weights grow every
-  100 000 steps (here geometrically, over 5 stages) and the rewards in the replay buffer are recomputed after each
-  change (p. 4, 6). The training uses SAC (stable-baselines3) instead of TD3.
+- Curriculum (`RewardCurriculum`, `asymmetric_sac.CurriculumCallback`): as in L2F, the reward weights grow by stages
+  (here geometrically, over 5 stages) and the rewards in the replay buffer are recomputed after each change (p. 4, 6).
+  Unlike L2F, a stage is taken only when the mean course error over the last 100 000 steps is below 15°: on L2F's
+  fixed schedule the weights reached their target before the policy could turn. The reward also has a linear
+  far-field term, so it keeps a slope where the capped quadratic cost is flat. The training uses SAC
+  (stable-baselines3) instead of TD3.
 
 Not ported: the closed-form motor model and the state clamps (`STATE_LIMIT_*`).
 

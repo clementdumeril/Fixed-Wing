@@ -1,0 +1,105 @@
+{
+ "pilot": "runs/sac_40384634_seed0",
+ "complete_flights": 93,
+ "straight_flight_mean_abs": {
+  "roll_deg": 1.596,
+  "sideslip_deg": 0.592,
+  "aileron_from_trim": 0.081,
+  "rudder_from_trim": 0.07
+ },
+ "straight_flight_max_abs_roll_deg": 30.85,
+ "failures_within_5_s": 4,
+ "failures": [
+  {
+   "seed": 11,
+   "reason": "alpha",
+   "t": 6.24,
+   "max_abs_roll_deg": 27.29,
+   "alpha_end": 15.23,
+   "roll_end": -2.31,
+   "elevator_end": -0.48,
+   "throttle_end": -0.92,
+   "airspeed_end": 22.14,
+   "altitude_error_end": 8.04,
+   "course_error_end": -37.48
+  },
+  {
+   "seed": 15,
+   "reason": "alpha",
+   "t": 0.4,
+   "max_abs_roll_deg": 29.9,
+   "alpha_end": 15.13,
+   "roll_end": -29.9,
+   "elevator_end": -0.31,
+   "throttle_end": -0.75,
+   "airspeed_end": 23.37,
+   "altitude_error_end": 1.82,
+   "course_error_end": -83.83
+  },
+  {
+   "seed": 16,
+   "reason": "alpha",
+   "t": 17.46,
+   "max_abs_roll_deg": 39.84,
+   "alpha_end": 15.08,
+   "roll_end": -7.13,
+   "elevator_end": -0.41,
+   "throttle_end": -0.72,
+   "airspeed_end": 18.21,
+   "altitude_error_end": 1.52,
+   "course_error_end": -110.52
+  },
+  {
+   "seed": 30,
+   "reason": "alpha",
+   "t": 0.88,
+   "max_abs_roll_deg": 56.47,
+   "alpha_end": 15.5,
+   "roll_end": -56.47,
+   "elevator_end": -0.64,
+   "throttle_end": -0.98,
+   "airspeed_end": 23.59,
+   "altitude_error_end": -3.2,
+   "course_error_end": -28.78
+  },
+  {
+   "seed": 68,
+   "reason": "alpha",
+   "t": 4.36,
+   "max_abs_roll_deg": 57.43,
+   "alpha_end": 15.02,
+   "roll_end": 9.48,
+   "elevator_end": -0.68,
+   "throttle_end": -0.93,
+   "airspeed_end": 23.94,
+   "altitude_error_end": 8.14,
+   "course_error_end": -17.08
+  },
+  {
+   "seed": 71,
+   "reason": "alpha",
+   "t": 9.0,
+   "max_abs_roll_deg": 44.19,
+   "alpha_end": 15.22,
+   "roll_end": 38.07,
+   "elevator_end": -0.53,
+   "throttle_end": -0.06,
+   "airspeed_end": 21.13,
+   "altitude_error_end": 1.89,
+   "course_error_end": -99.74
+  },
+  {
+   "seed": 92,
+   "reason": "alpha",
+   "t": 1.94,
+   "max_abs_roll_deg": 65.85,
+   "alpha_end": 15.12,
+   "roll_end": 38.05,
+   "elevator_end": -0.52,
+   "throttle_end": -0.78,
+   "airspeed_end": 21.3,
+   "altitude_error_end": -3.7,
+   "course_error_end": 6.33
+  }
+ ]
+}

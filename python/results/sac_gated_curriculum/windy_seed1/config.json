@@ -1,0 +1,74 @@
+{
+  "args": {
+    "steps": 1000000,
+    "seed": 1,
+    "n_envs": 8,
+    "threads": 1,
+    "gamma": 0.99,
+    "eval_episodes": 100,
+    "no_curriculum": false,
+    "out": "runs/sac_40384634_seed1",
+    "wind_max": 5.0,
+    "turbulence": "light",
+    "noise": 1.0,
+    "randomization": 0.0
+  },
+  "env": {
+    "frequency": 50.0,
+    "n_substeps": 2,
+    "latency_steps": 1,
+    "episode_seconds": 30.0,
+    "altitude_range": [
+      50.0,
+      120.0
+    ],
+    "airspeed_range": [
+      20.0,
+      30.0
+    ],
+    "altitude_change_max": 20.0,
+    "course_change_max": 1.5707963267948966,
+    "roll_max": 0.3490658503988659,
+    "pitch_max": 0.17453292519943295,
+    "rate_max": 0.3,
+    "airspeed_sensor": true,
+    "action_history": 10,
+    "observation_noise": 1.0,
+    "privileged_observation": true,
+    "alpha_range": [
+      -0.17453292519943295,
+      0.2617993877991494
+    ],
+    "airspeed_limits": [
+      15.0,
+      40.0
+    ],
+    "altitude_error_max": 50.0,
+    "altitude_floor": 20.0,
+    "randomization": 0.0,
+    "wind_speed_max": 5.0,
+    "turbulence": {
+      "sigma": "[1.06 1.06 0.7 ]",
+      "length_scale": "[200. 200.  50.]"
+    },
+    "thermals": false,
+    "reward": {
+      "survival": 1.0,
+      "cost_cap": 0.5,
+      "airspeed_scale": 2.0,
+      "altitude_scale": 10.0,
+      "course_scale": 0.5235987755982988,
+      "airspeed_weight": 0.3,
+      "altitude_weight": 0.3,
+      "course_weight": 0.3,
+      "action_change_weight": 0.1,
+      "sideslip_scale": 0.08726646259971647,
+      "sideslip_weight": 0.1,
+      "trim_weight": 0.05,
+      "far_weight": 0.1,
+      "far_airspeed_scale": 10.0,
+      "far_altitude_scale": 50.0,
+      "far_course_scale": 1.5707963267948966
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+ "pilot": "PID",
+ "complete_flights": 100,
+ "straight_flight_mean_abs": {
+  "roll_deg": 0.0,
+  "sideslip_deg": 0.0,
+  "aileron_from_trim": 0.0,
+  "rudder_from_trim": 0.0
+ },
+ "straight_flight_max_abs_roll_deg": 0.01,
+ "failures_within_5_s": 0,
+ "failures": []
+}

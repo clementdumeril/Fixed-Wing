@@ -1,0 +1,27 @@
+{
+ "pilot": "runs/sac_40384634_seed2",
+ "complete_flights": 99,
+ "straight_flight_mean_abs": {
+  "roll_deg": 1.699,
+  "sideslip_deg": 0.66,
+  "aileron_from_trim": 0.057,
+  "rudder_from_trim": 0.062
+ },
+ "straight_flight_max_abs_roll_deg": 5.87,
+ "failures_within_5_s": 1,
+ "failures": [
+  {
+   "seed": 11,
+   "reason": "alpha",
+   "t": 1.94,
+   "max_abs_roll_deg": 71.13,
+   "alpha_end": 15.12,
+   "roll_end": -44.35,
+   "elevator_end": -0.56,
+   "throttle_end": -0.98,
+   "airspeed_end": 25.8,
+   "altitude_error_end": 3.14,
+   "course_error_end": -59.53
+  }
+ ]
+}

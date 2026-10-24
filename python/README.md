@@ -8,7 +8,9 @@ with fixed-wing physics in `fixed_wing/airplane/` (aerodynamics, actuator lag, t
 `examples/train_sac.py` trains SAC with an asymmetric actor-critic and the L2F reward curriculum; [savio/README.md](savio/README.md) runs it on Savio.
 `examples/plot_training.py`, `compare_flights.py` (RL against PID over time), `make_videos.py` and `make_3d_videos.py` (GIFs), `ui_policy.py` and `ui_fleet.py` (live 3D viewer, one or many airplanes) show the results.
 `examples/reward_saturation.py` checks a reward before a long run (how often it is nearly flat under exploration noise).
-Results of the first run: [results/sac_run1](results/sac_run1/README.md).
+`examples/diagnose_flights.py` measures attitude in straight flight and describes every failure.
+Results: [results/sac_run1](results/sac_run1/README.md) (first run) and
+[results/sac_gated_curriculum](results/sac_gated_curriculum/README.md) (3 seeds in calm air, 3 in wind).
 
 [DIFFERENCES_L2F.md](DIFFERENCES_L2F.md) lists what changed from L2F.
 [PARAMETERS.md](PARAMETERS.md) gives the source of every parameter.
