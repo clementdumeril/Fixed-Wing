@@ -1,0 +1,7 @@
+trim           max |C++ - Python| = 1.53e-16
+trim commands  max |C++ - Python| = 2.00e-15
+state          max |C++ - Python| = 7.18e-13
+reward         max |C++ - Python| = 7.66e-15
+termination    max |C++ - Python| = 0.00e+00
+observations   max |C++ - Python| = 1.19e-07
+11 flights, 7136 steps: OK
