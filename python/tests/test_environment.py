@@ -254,3 +254,13 @@ def test_curriculum_waits_for_tracking():
     assert callback.stage == 0
     run(np.deg2rad(5), 30)  # tracking: one stage per period
     assert callback.stage >= 2
+
+
+def test_config_from_run(tmp_path):
+    # the videos and the diagnosis fly a policy in the conditions it was trained in
+    import json
+    from fixed_wing.airplane.environment import config_from_run
+    (tmp_path / "config.json").write_text(json.dumps({"args": {"wind_max": 5.0, "turbulence": "light", "noise": 1.0}}))
+    config = config_from_run(tmp_path, privileged_observation=True)
+    assert config.wind_speed_max == 5.0 and config.turbulence is not None and config.observation_noise == 1.0
+    assert config.randomization == 0.0 and config.privileged_observation

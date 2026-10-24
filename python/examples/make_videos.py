@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 
-from fixed_wing.airplane.environment import EnvConfig, FixedWingEnv, measurements
+from fixed_wing.airplane.environment import FixedWingEnv, config_from_run, measurements
 from fixed_wing.airplane.operations import air_data
 from fixed_wing.airplane.pid import PIDPolicy
 
@@ -179,15 +179,17 @@ def main():
     parser.add_argument("run", type=Path, help="directory written by examples/train_sac.py")
     parser.add_argument("--seed", type=int, default=1, help="test scenario")
     parser.add_argument("--out", type=Path, default=Path("runs/videos"))
+    parser.add_argument("--comparison-only", action="store_true", help="skip learning.gif")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    env = FixedWingEnv(EnvConfig(privileged_observation=True))
+    env = FixedWingEnv(config_from_run(args.run, privileged_observation=True))  # wind etc. of the training
     checkpoints = sorted((int(re.search(r"(\d+)_steps", p.name).group(1)), p)
                          for p in (args.run / "checkpoints").glob("*_steps.zip"))
     name = args.run.name
-    learning_video(env, checkpoints, args.seed, args.out / f"{name}_learning_scenario{args.seed}.gif")
-    print("saved learning video")
+    if not args.comparison_only:
+        learning_video(env, checkpoints, args.seed, args.out / f"{name}_learning_scenario{args.seed}.gif")
+        print("saved learning video")
     comparison_video(env, args.run / "model.zip", args.seed, args.out / f"{name}_rl_vs_pid_scenario{args.seed}.gif")
     print("saved comparison video")
 

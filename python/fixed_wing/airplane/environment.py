@@ -3,8 +3,11 @@
 Same pieces as the L2F environment (sample_initial_parameters, sample_initial_state, observe, reward, terminated),
 plus a Gymnasium wrapper, FixedWingEnv. Every design choice is a field of EnvConfig.
 """
+import argparse
 import copy
+import json
 from dataclasses import dataclass, field, fields, replace
+from pathlib import Path
 
 import numpy as np
 
@@ -487,3 +490,12 @@ def config_from_arguments(args, **kwargs):
     turbulence = TURBULENCE[args.turbulence]
     return EnvConfig(wind_speed_max=args.wind_max, turbulence=turbulence() if turbulence else None,
                      observation_noise=args.noise, randomization=args.randomization, **kwargs)
+
+
+def config_from_run(run, **kwargs):
+    """The flight conditions a run of examples/train_sac.py was trained in, read from its config.json."""
+    args = json.loads((Path(run) / "config.json").read_text())["args"]
+    defaults = argparse.Namespace(wind_max=0.0, turbulence="none", noise=0.0, randomization=0.0)
+    for name in vars(defaults):
+        setattr(defaults, name, args.get(name, getattr(defaults, name)))
+    return config_from_arguments(defaults, **kwargs)

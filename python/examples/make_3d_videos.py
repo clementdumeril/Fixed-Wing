@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from fixed_wing.airplane.environment import EnvConfig, FixedWingEnv, measurements
+from fixed_wing.airplane.environment import FixedWingEnv, config_from_run, measurements
 from fixed_wing.airplane.operations import air_data
 from fixed_wing.airplane.pid import PIDPolicy
 from fixed_wing.quaternion_helper import quaternion_to_rotation_matrix
@@ -165,7 +165,7 @@ def main():
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    env = FixedWingEnv(EnvConfig(privileged_observation=True))
+    env = FixedWingEnv(config_from_run(args.run, privileged_observation=True))  # wind etc. of the training
     checkpoints = {int(re.search(r"(\d+)_steps", p.name).group(1)): p for p in (args.run / "checkpoints").glob("*_steps.zip")}
     pilots = [("PID", PIDPolicy(), "tab:blue")]
     pilots += [(f"RL after {s:,} steps", load_policy(checkpoints[s]), "tab:orange") for s in args.stages]

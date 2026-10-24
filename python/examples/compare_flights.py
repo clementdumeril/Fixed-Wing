@@ -1,7 +1,7 @@
 """RL policy and PID on the same test scenarios: airspeed, altitude, course error and commands over time.
 
 python examples/compare_flights.py --model runs/sac_123_seed0/model.zip --seeds 0 1 2 --out flights.png
-Without --model, only the PID flies.
+Without --model, only the PID flies. Flight conditions as in training: --wind-max, --turbulence, --noise, --randomization.
 """
 import argparse
 from collections import defaultdict
@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from fixed_wing.airplane.airplane import AILERON, ELEVATOR, THROTTLE
-from fixed_wing.airplane.environment import EnvConfig, FixedWingEnv, measurements, wrap
+from fixed_wing.airplane.environment import FixedWingEnv, add_condition_arguments, config_from_arguments, measurements, wrap
 from fixed_wing.airplane.pid import PIDPolicy
 
 
@@ -40,9 +40,10 @@ def main():
     parser.add_argument("--model", help="model.zip of examples/train_sac.py")
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2], help="test scenarios")
     parser.add_argument("--out", default="flights.png")
+    add_condition_arguments(parser)
     args = parser.parse_args()
 
-    env = FixedWingEnv(EnvConfig(privileged_observation=True))
+    env = FixedWingEnv(config_from_arguments(args, privileged_observation=True))
     pilots = {"PID": PIDPolicy()}
     if args.model:
         from stable_baselines3 import SAC

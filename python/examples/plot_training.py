@@ -19,7 +19,9 @@ def read(run):
     with open(Path(run) / "progress.csv", newline="") as f:
         rows = [r for r in csv.DictReader(f) if r.get("rollout/ep_len_mean")]
     column = lambda name: [float(r[name]) if r.get(name) else float("nan") for r in rows]
-    return column("time/total_timesteps"), column("rollout/ep_len_mean"), column("rollout/ep_rew_mean")
+    names = {"steps": "time/total_timesteps", "length": "rollout/ep_len_mean", "return": "rollout/ep_rew_mean",
+             "course_error": "train/course_error_deg", "stage": "curriculum/stage"}  # the last two since the gated curriculum
+    return {key: column(name) for key, name in names.items()}
 
 
 def main():
@@ -28,15 +30,20 @@ def main():
     parser.add_argument("--out", default="training.png")
     args = parser.parse_args()
 
-    fig, (length, ret) = plt.subplots(1, 2, figsize=(11, 4))
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5))
+    (length, ret), (course, stage) = axes
     for run in args.runs:
-        steps, lengths, returns = read(run)
-        length.plot(steps, lengths, label=Path(run).name)
-        ret.plot(steps, returns, label=Path(run).name)
+        c = read(run)
+        for ax, key in ((length, "length"), (ret, "return"), (course, "course_error"), (stage, "stage")):
+            ax.plot(c["steps"], c[key], label=Path(run).name)
     length.axhline(1500, color="gray", linestyle="--", linewidth=0.8)
-    length.set(xlabel="environment steps", ylabel="episode length (steps, max 1500)", title="How long the airplane flies")
-    ret.set(xlabel="environment steps", ylabel="training return", title="Return (with exploration and curriculum)")
-    for ax in (length, ret):
+    course.axhline(15, color="gray", linestyle="--", linewidth=0.8)
+    length.set(ylabel="episode length (steps, max 1500)", title="How long the airplane flies")
+    ret.set(ylabel="training return", title="Return (with exploration and curriculum)")
+    course.set(ylabel="mean |course error| (deg)", title="Course error (dashed: curriculum threshold)", yscale="log")
+    stage.set(ylabel="stage", title="Reward curriculum stage (0: initial weights, 5: final)")
+    for ax in axes.ravel():
+        ax.set_xlabel("environment steps")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
     fig.tight_layout()
