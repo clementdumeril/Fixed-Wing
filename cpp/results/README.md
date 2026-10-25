@@ -26,7 +26,7 @@ the machine for most of the time.
   it is where the Python runs were at 300 000 steps (local check: 90 % of 20 flights, 8.6° of course error).
 - With the L2F sizes it runs 10 times faster per step but never learns the course: the error stays above the 15° of
   the curriculum gate, so the reward weights never grow (`training.png`). For this task the critic or the batch size
-  matters; the next step is a sweep between the two.
+  matters; the sweep between the two is in [`sweep/`](sweep/README.md): the critic size decides.
 - The curriculum stayed at its initial weights during both trainings: the 256 run went under 15° after 140 000 steps,
   and the gate averages over 100 000-step periods.
 

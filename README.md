@@ -33,6 +33,12 @@ remain, each with a cause I could identify:
 - Steady offsets of 2 to 4° in course and about 2 m in altitude: an MLP without memory has no integral action.
 - Chattering commands in wind: 15 to 23 times the PID's command change per step.
 
+The C++ port (RLtools, calm air) then gave the best policy so far, with the same settings on one Savio core: 97 of
+100 flights, a mean return of 1335 against 1322 for the PID, airspeed within 0.23 m/s against 0.37, course within
+1.7°. The PID still completes every flight and holds altitude better (0.68 against 0.99 m). A sweep of network and
+batch sizes shows the critic size decides: with 256 units the policy learns in 70 to 140 min on one core, with 64 (the
+L2F size) it never learns the course. Source: [`cpp/results/sweep`](cpp/results/sweep/README.md).
+
 Getting here took three reward fixes. The first run ([`results/sac_run1`](python/results/sac_run1/README.md))
 completed 98 flights but flew 25° banked in a 9° sideslip, because the reward penalized neither; I added a sideslip
 and a distance-to-trim term. The L2F curriculum then broke learning twice: a command-change weight of 50 let
@@ -57,7 +63,7 @@ has a linear far-field term, and the curriculum only advances when the course er
   files, learning curves, GIFs, and a live 3D viewer that flies one airplane or 36 at once.
 - C++ port ([`cpp/`](cpp/README.md)): the airplane and the task in the MDP form of RLtools, trained with its SAC.
   It **matches the Python environment step by step** (7136 steps, states within 7e-13) and, with the same network sizes,
-  learns like the Python runs on one core instead of eight.
+  learns better than the Python runs, on one core instead of eight. Savio jobs for a size sweep.
 
 Inherited: the L2F structure and its quaternion and RK4 helpers (translated to Python), the ui-server protocol, and the
 Aerosonde coefficients from Beard and McLain.
@@ -89,7 +95,8 @@ since the linear model has no stall.
 - Three seeds per condition. Success varies by up to 14 flights between seeds and by about 10 between checkpoints of
   one seed, so small differences between variants are not significant.
 - The Python simulator runs about 350 steps/s per core. The C++ port simulates over 300 000 steps/s, but in calm air
-  only so far, and with the network sizes of L2F it does not learn the course (28° of error after 1 M steps).
+  only so far, and its training time is set by the critic: the 256 critic it needs takes 70 to 140 min per run.
+- I have not isolated why the C++ runs learn better than the Python ones with the same settings.
 - No flight test yet.
 
 ## Status
@@ -98,7 +105,8 @@ since the linear model has no stall.
 - [x] RL environment, PID baseline, first SAC policy
 - [x] Reward fixes, 3 seeds in calm air and 3 in wind, turbulence and sensor noise
 - [x] C++ port with RLtools, checked against Python (calm air)
-- [ ] Network and batch sizes for fast C++ training; wind, turbulence and noise in C++
+- [x] Network and batch size sweep in C++ (calm air)
+- [ ] Wind, turbulence and sensor noise in C++
 - [ ] Angle-of-attack margin, integral of the tracking errors, smoother commands
 - [ ] Domain randomization, MLP against GRU policies
 - [ ] Strix model, then trajectory tracking to compare with the lab's NMPC
