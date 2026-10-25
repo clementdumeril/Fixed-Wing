@@ -396,12 +396,19 @@ namespace fixed_wing{
     }
 
     template <typename T>
-    T reward_from_errors(T e_airspeed, T e_altitude, T e_course, T beta, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
+    T alpha_excess(T alpha, const RewardConfig<T>& c){
+        // how far the angle of attack is inside the margin before the stall limits (0 away from them)
+        return std::fmax(alpha - c.alpha_soft_max, T(0)) + std::fmax(c.alpha_soft_min - alpha, T(0));
+    }
+
+    template <typename T>
+    T reward_from_errors(T e_airspeed, T e_altitude, T e_course, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
         auto sq = [](T x){ return x * x; };
         T cost = c.airspeed_weight * sq(e_airspeed / c.airspeed_scale)
                + c.altitude_weight * sq(e_altitude / c.altitude_scale)
                + c.course_weight * sq(e_course / c.course_scale)
                + c.sideslip_weight * sq(beta / c.sideslip_scale)
+               + c.alpha_margin_weight * sq(alpha_excess(alpha, c) / c.alpha_margin_scale)
                + c.action_change_weight * action_change_squared
                + c.trim_weight * trim_deviation_squared;
         T far = c.far_weight * (std::fmin(std::abs(e_airspeed) / c.far_airspeed_scale, T(1))
@@ -432,14 +439,14 @@ namespace fixed_wing{
         Measurements<T> m = measurements(p, next.body);
         T e_airspeed, e_altitude, e_course;
         errors(m, next, e_airspeed, e_altitude, e_course);
-        T beta = air_data(p, next.body).beta;
+        AirData<T> air = air_data(p, next.body);
         T change = 0, deviation = 0;
         for(int i = 0; i < N_ACTUATORS; i++){
             T a = clip(action[i], T(-1), T(1));
             change += (a - state.action_history[ACTION_HISTORY - 1][i]) * (a - state.action_history[ACTION_HISTORY - 1][i]);
             deviation += (a - state.trim_action[i]) * (a - state.trim_action[i]);
         }
-        return reward_from_errors(e_airspeed, e_altitude, e_course, beta, change, deviation, config.reward);
+        return reward_from_errors(e_airspeed, e_altitude, e_course, air.beta, air.alpha, change, deviation, config.reward);
     }
 
     template <typename T>
@@ -451,6 +458,7 @@ namespace fixed_wing{
         T e_airspeed = next_observation[0] * 5;
         T e_altitude = next_observation[1] * 20;
         T e_course = std::atan2(next_observation[2], next_observation[3]);
+        T alpha = next_observation[n] * T(0.3);
         T beta = next_observation[n + 1] * T(0.3);
         T change = 0, deviation = 0;
         for(int i = 0; i < N_ACTUATORS; i++){
@@ -460,7 +468,7 @@ namespace fixed_wing{
             change += (a - previous) * (a - previous);
             deviation += (a - trim_action) * (a - trim_action);
         }
-        return reward_from_errors(e_airspeed, e_altitude, e_course, beta, change, deviation, c);
+        return reward_from_errors(e_airspeed, e_altitude, e_course, beta, alpha, change, deviation, c);
     }
 
     template <typename T>

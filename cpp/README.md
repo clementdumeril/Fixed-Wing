@@ -49,6 +49,7 @@ source savio/setup.sh          # login node: modules, Intel MKL in the venv, con
 sbatch savio/build.slurm       # compute node: compile, export the test scenarios, check against Python
 sbatch savio/sweep.slurm       # 6 critic x batch sizes x 3 seeds, one core each, 1 M steps in calm air
 sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000   # one variant, 3 seeds, any number of steps
+sbatch savio/alpha_margin.slurm   # critic 256 x batch 64 with a margin to the stall in the reward, weights 0, 0.3, 1
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv` and `evaluation.json`.

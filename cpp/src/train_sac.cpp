@@ -2,8 +2,9 @@
 // (asymmetric actor-critic, gated reward curriculum with replay-buffer recomputation), then an evaluation on the
 // 100 test scenarios of the Python environment.
 //
-// train_sac <scenarios.txt> <out_dir> [seed] [steps]
-//   scenarios.txt: tools/export_scenarios.py; out_dir gets progress.csv and evaluation.json
+// train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W]
+//   scenarios.txt: tools/export_scenarios.py; out_dir gets config.json, progress.csv and evaluation.json
+//   --alpha-weight: weight of the reward term that keeps a margin to the stall (RewardConfig::alpha_margin_weight)
 #include <rl_tools/operations/cpu_mux.h>
 
 #include <fixed_wing/operations_generic.h>
@@ -211,6 +212,7 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
     std::vector<double> returns(N_SCENARIOS, 0), change_sum(N_SCENARIOS, 0);
     std::vector<std::vector<std::array<double, 3>>> errors(N_SCENARIOS);
     std::vector<std::array<T_ENV, 4>> previous(N_SCENARIOS);
+    std::vector<double> max_bank(N_SCENARIOS, 0);  // deg, over the flight
     for(TI k = 0; k < N_SCENARIOS; k++){
         const Scenario& s = scenarios[k];
         fixed_wing::start_state(p, s.body, s.airspeed, s.altitude, s.course, states[k]);
@@ -235,6 +237,7 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
             T_ENV ea, eh, ec;
             fixed_wing::errors(m, next, ea, eh, ec);
             errors[k].push_back({ea, eh, ec});
+            max_bank[k] = std::max(max_bank[k], std::abs(std::atan2(m.R[2][1], m.R[2][2])) * 180 / fixed_wing::PI);
             double change = 0;
             for(int i = 0; i < 4; i++){ change += std::abs(a[i] - previous[k][i]); previous[k][i] = a[i]; }
             change_sum[k] += change / 4;
@@ -243,11 +246,16 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
     }
     const char* names[] = {"", "diverged", "low_altitude", "alpha", "airspeed", "altitude"};
     std::map<std::string, int> failures;
-    double rms[3] = {0, 0, 0}, smoothness = 0, mean_return = 0;
-    int complete = 0;
+    double rms[3] = {0, 0, 0}, smoothness = 0, mean_return = 0, failed_bank = 0;
+    int complete = 0, early = 0;
     for(TI k = 0; k < N_SCENARIOS; k++){
         mean_return += returns[k] / N_SCENARIOS;
-        if(reason[k] != 0){ failures[names[reason[k]]]++; continue; }
+        if(reason[k] != 0){
+            failures[names[reason[k]]]++;
+            early += errors[k].size() <= 250 ? 1 : 0;  // within the first 5 s
+            failed_bank += max_bank[k];
+            continue;
+        }
         complete++;
         size_t half = errors[k].size() / 2;
         for(int j = 0; j < 3; j++){
@@ -264,7 +272,9 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
     for(auto& [name, count]: failures){ json << (first ? "" : ", ") << "\"" << name << "\": " << count; first = false; }
     json << "},\n  \"airspeed_rmse\": " << rms[0] / std::max(complete, 1) << ",\n  \"altitude_rmse\": " << rms[1] / std::max(complete, 1)
          << ",\n  \"course_rmse_deg\": " << rms[2] / std::max(complete, 1) * 180 / fixed_wing::PI
-         << ",\n  \"mean_action_change\": " << smoothness / std::max(complete, 1) << "\n}\n";
+         << ",\n  \"mean_action_change\": " << smoothness / std::max(complete, 1)
+         << ",\n  \"failures_within_5_s\": " << early
+         << ",\n  \"failed_flights_mean_max_bank_deg\": " << failed_bank / std::max(int(N_SCENARIOS) - complete, 1) << "\n}\n";
     rlt::free(device, actor_state);
     rlt::free(device, actor_buffer);
     rlt::free(device, observations);
@@ -274,7 +284,7 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -283,6 +293,15 @@ int run(int argc, char** argv){
     TI seed = argc > 3 ? std::stoul(argv[3]) : 0;
     TI steps = argc > 4 ? std::stoul(argv[4]) : 1000000;
     if(steps > LOOP_CORE_PARAMETERS::STEP_LIMIT) throw std::runtime_error("steps above STEP_LIMIT_MAX, recompile with a larger one");
+    T_ENV alpha_weight = 0;
+    for(int i = 5; i < argc; i++){
+        std::string option = argv[i];
+        if(option == "--alpha-weight" && i + 1 < argc) alpha_weight = std::stod(argv[++i]);
+        else throw std::runtime_error("unknown option " + option);
+    }
+    std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"steps\": " << steps
+        << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH
+        << ",\n  \"alpha_margin_weight\": " << alpha_weight << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -290,6 +309,8 @@ int run(int argc, char** argv){
     rlt::malloc(device, ts);
     rlt::init(device, ts, seed);
     Curriculum curriculum;
+    curriculum.initial.alpha_margin_weight = alpha_weight;  // constant: not part of the curriculum
+    curriculum.target.alpha_margin_weight = alpha_weight;
     int stage = 0;
     auto set_reward = [&](const fixed_wing::RewardConfig<T_ENV>& c){
         for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++) rlt::get(ts.off_policy_runner.envs, 0, i).config.reward = c;
