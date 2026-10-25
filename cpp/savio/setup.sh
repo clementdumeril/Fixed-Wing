@@ -9,5 +9,5 @@ MKL_CONFIG=$(find "$VIRTUAL_ENV" -name MKLConfig.cmake | head -n 1)
 # is too old for RLtools' TensorBoard logger
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
     -DMKL_DIR="$(dirname "$MKL_CONFIG")" -DMKL_ROOT="$VIRTUAL_ENV" -DMKL_THREADING=sequential -DMKL_INTERFACE=lp64 \
-    -DRL_TOOLS_DISABLE_TENSORBOARD=ON -DRL_TOOLS_DISABLE_HDF5=ON -DRL_TOOLS_DISABLE_CLI11=ON
+    -DRL_TOOLS_DISABLE_TENSORBOARD=ON -DRL_TOOLS_DISABLE_HDF5=ON -DRL_TOOLS_DISABLE_CLI11=ON \n    -DFETCHCONTENT_UPDATES_DISCONNECTED=ON  # compute nodes cannot reach GitHub when CMake reconfigures in a job
 mkdir -p runs
