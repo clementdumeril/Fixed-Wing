@@ -46,6 +46,7 @@ From `Fixed-Wing/cpp`, with the Python venv of [`python/savio`](../python/savio/
 source savio/setup.sh          # login node: modules, Intel MKL in the venv, configure (downloads RLtools)
 sbatch savio/build.slurm       # compute node: compile, export the test scenarios, check against Python
 sbatch savio/sweep.slurm       # 6 critic x batch sizes x 3 seeds, one core each, 1 M steps in calm air
+sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000   # one variant, 3 seeds, any number of steps
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv` and `evaluation.json`.

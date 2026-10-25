@@ -42,8 +42,9 @@ using TYPE_POLICY = rlt::numeric_types::Policy<T>;
 using TI = typename DEVICE::index_t;
 using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>>;
 
-#ifndef STEP_LIMIT_DEFAULT
-#define STEP_LIMIT_DEFAULT 1000000
+// RLtools stops training silently past STEP_LIMIT: keep it above any step count passed on the command line
+#ifndef STEP_LIMIT_MAX
+#define STEP_LIMIT_MAX 10000000
 #endif
 // network and batch sizes: the Python run (critic 256, batch 256) by default; L2F uses about 64 and 64
 #ifndef FW_CRITIC_HIDDEN
@@ -64,7 +65,7 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
     static constexpr TI N_WARMUP_STEPS = 10000;  // uniform random actions, as learning_starts
     static constexpr TI N_WARMUP_STEPS_CRITIC = 10000;
     static constexpr TI N_WARMUP_STEPS_ACTOR = 10000;
-    static constexpr TI STEP_LIMIT = STEP_LIMIT_DEFAULT;
+    static constexpr TI STEP_LIMIT = STEP_LIMIT_MAX;
     static constexpr TI REPLAY_BUFFER_CAP = 1000000;
     static constexpr TI ACTOR_HIDDEN_DIM = 64;
     static constexpr TI ACTOR_NUM_LAYERS = 3;  // two hidden layers
@@ -280,7 +281,8 @@ int run(int argc, char** argv){
     std::filesystem::path out_dir = argv[2];
     std::filesystem::create_directories(out_dir);
     TI seed = argc > 3 ? std::stoul(argv[3]) : 0;
-    TI steps = argc > 4 ? std::stoul(argv[4]) : LOOP_CORE_PARAMETERS::STEP_LIMIT;
+    TI steps = argc > 4 ? std::stoul(argv[4]) : 1000000;
+    if(steps > LOOP_CORE_PARAMETERS::STEP_LIMIT) throw std::runtime_error("steps above STEP_LIMIT_MAX, recompile with a larger one");
 
     DEVICE device;
     rlt::init(device);
