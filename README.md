@@ -33,10 +33,10 @@ remain, each with a cause I could identify:
 - Steady offsets of 2 to 4° in course and about 2 m in altitude: an MLP without memory has no integral action.
 - Chattering commands in wind: 15 to 23 times the PID's command change per step.
 
-The C++ port (RLtools, calm air) then gave the best policy so far, with the same settings on one Savio core: 97 of
+The C++ port (RLtools, calm air) then gave the best results so far (means of 3 seeds), with the same settings on one Savio core: 97 of
 100 flights, a mean return of 1335 against 1322 for the PID, airspeed within 0.23 m/s against 0.37, course within
 1.7°. The PID still completes every flight and holds altitude better (0.68 against 0.99 m). A sweep of network and
-batch sizes shows the critic size decides: with 256 units the policy learns in 70 to 140 min on one core, with 64 (the
+batch sizes shows the critic size decides: with 256 units the policy learns in 70 to 140 min on one core (67 to 158 min per seed), with 64 (the
 L2F size) it never learns the course. Source: [`cpp/results/sweep`](cpp/results/sweep/README.md).
 
 Getting here took three reward fixes. The first run ([`results/sac_run1`](python/results/sac_run1/README.md))
