@@ -51,6 +51,13 @@ foreach(size ${FW_SWEEP})
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
+# critic 256, batch 64, with the time integrals of the errors in the observation (63 values instead of 60)
+add_executable(train_sac_c256_b64_integral src/train_sac.cpp)
+target_include_directories(train_sac_c256_b64_integral PRIVATE include)
+target_link_libraries(train_sac_c256_b64_integral PRIVATE RLtools::RLtools)
+target_compile_definitions(train_sac_c256_b64_integral PRIVATE FW_CRITIC_HIDDEN=256 FW_BATCH=64 FW_ERROR_INTEGRAL=1)
+list(APPEND TRAIN_TARGETS train_sac_c256_b64_integral)
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)

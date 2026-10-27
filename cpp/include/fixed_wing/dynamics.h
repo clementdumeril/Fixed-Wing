@@ -375,6 +375,9 @@ namespace fixed_wing{
         for(int i = 0; i < 3; i++) write(k++, m.rates[i] / T(PI));
         for(int i = 0; i < 3; i++) write(k++, m.velocity_body[i] / 25);
         write(k++, m.airspeed / 25);
+        if constexpr(N_INTEGRALS > 0){
+            for(int i = 0; i < 3; i++) write(k++, s.error_integral[i] / p.error_integral_limits[i]);
+        }
         for(int h = 0; h < ACTION_HISTORY; h++) for(int i = 0; i < N_ACTUATORS; i++) write(k++, s.action_history[h][i]);
     }
 
@@ -404,9 +407,13 @@ namespace fixed_wing{
     template <typename T>
     T reward_from_errors(T e_airspeed, T e_altitude, T e_course, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
         auto sq = [](T x){ return x * x; };
-        T cost = c.airspeed_weight * sq(e_airspeed / c.airspeed_scale)
-               + c.altitude_weight * sq(e_altitude / c.altitude_scale)
-               + c.course_weight * sq(e_course / c.course_scale)
+        auto tracking = [&](T x){  // scaled tracking error: square, or Huber with the same value near 1
+            if(c.huber_delta <= 0) return sq(x);
+            return std::abs(x) < c.huber_delta ? sq(x) / (2 * c.huber_delta) : std::abs(x) - c.huber_delta / 2;
+        };
+        T cost = c.airspeed_weight * tracking(e_airspeed / c.airspeed_scale)
+               + c.altitude_weight * tracking(e_altitude / c.altitude_scale)
+               + c.course_weight * tracking(e_course / c.course_scale)
                + c.sideslip_weight * sq(beta / c.sideslip_scale)
                + c.alpha_margin_weight * sq(alpha_excess(alpha, c) / c.alpha_margin_scale)
                + c.action_change_weight * action_change_squared
@@ -478,6 +485,20 @@ namespace fixed_wing{
         p.n_substeps = config.n_substeps;
         p.latency_steps = config.latency_steps;
         if(p.latency_steps > MAX_LATENCY) throw std::runtime_error("latency_steps > MAX_LATENCY");
+        for(int i = 0; i < 3; i++) p.error_integral_limits[i] = config.error_integral_limits[i];
+    }
+
+    template <typename T>
+    void simulate_task(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS], State<T>& next){
+        // simulate, then the error integrals: they need the setpoint, so they belong to the task, not to the physics
+        simulate(p, state, action, next);
+        Measurements<T> m = measurements(p, next.body);
+        T e[3];
+        errors(m, next, e[0], e[1], e[2]);
+        for(int i = 0; i < 3; i++){
+            T limit = p.error_integral_limits[i];
+            next.error_integral[i] = clip(state.error_integral[i] + e[i] * p.dt, -limit, limit);
+        }
     }
 
     template <typename T>
@@ -504,5 +525,6 @@ namespace fixed_wing{
         T previous[N_ACTUATORS];
         normalize_action(p, body.actuators, previous);
         for(int h = 0; h < ACTION_HISTORY; h++) for(int i = 0; i < N_ACTUATORS; i++) s.action_history[h][i] = previous[i];
+        for(int i = 0; i < 3; i++) s.error_integral[i] = 0;
     }
 }

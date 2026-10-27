@@ -7,6 +7,11 @@
 
 #include <rl_tools/rl/environments/environments.h>
 
+// 1: the time integrals of the airspeed, altitude and course errors are part of the observation (train_sac_*_integral)
+#ifndef FW_ERROR_INTEGRAL
+#define FW_ERROR_INTEGRAL 0
+#endif
+
 namespace fixed_wing{
     // order of the actions and of Body::actuators
     constexpr int AILERON = 0, ELEVATOR = 1, RUDDER = 2, THROTTLE = 3;
@@ -14,6 +19,7 @@ namespace fixed_wing{
     constexpr int N_COEFFICIENTS = 28;
     constexpr int MAX_LATENCY = 4;
     constexpr int ACTION_HISTORY = 10;
+    constexpr int N_INTEGRALS = FW_ERROR_INTEGRAL ? 3 : 0;
 
     // aerodynamic coefficients, in the order of airplane.Aerodynamics in Python (randomization factors follow it)
     enum Coefficient{
@@ -43,6 +49,7 @@ namespace fixed_wing{
         int n_substeps;  // RK4 steps per control period, the command is held over all of them
         int latency_steps;  // control periods between a command and its application
         T wind[3];  // world frame, constant over an episode
+        T error_integral_limits[3];  // m, m s, rad s (TaskConfig)
         // randomization factors, kept for the critic: mass, inertia, thrust, actuator time, then the 28 coefficients
         T randomization[4 + N_COEFFICIENTS];
     };
@@ -67,6 +74,7 @@ namespace fixed_wing{
         T setpoint_course;  // rad, direction of the ground velocity, counterclockwise from world x
         T trim_action[N_ACTUATORS];  // normalized commands of steady level flight at the setpoint airspeed
         T action_history[ACTION_HISTORY][N_ACTUATORS];  // normalized, oldest first; the last row is the previous action
+        T error_integral[3];  // time integrals of the airspeed, altitude and course errors, clipped (simulate_task)
     };
 
     template <typename T>
@@ -94,6 +102,16 @@ namespace fixed_wing{
         T alpha_soft_min = T(-0.10471975511965977);  // -6 deg
         T alpha_soft_max = T(0.19198621771937624);  // 11 deg
         T alpha_margin_scale = T(0.06981317007977318);  // 4 deg: costs the weight at the limit
+        // 0: squared airspeed, altitude and course errors. > 0: Huber (smooth L1) on the scaled errors, quadratic below
+        // huber_delta and linear above, so that small errors still cost (the square is flat near 0)
+        T huber_delta = 0;
+    };
+
+    // how an episode starts (sample_initial_state)
+    enum StartMode{
+        TRIMMED = 0,  // trimmed flight, perturbed in attitude and rates (environment.py)
+        NEUTRAL,  // the same flight with neutral commands: surfaces at 0, half throttle (no trim prior)
+        RANDOM  // wide attitude, airspeed, angle of attack, sideslip and commands, never stalled (no trim prior)
     };
 
     template <typename T>
@@ -114,13 +132,23 @@ namespace fixed_wing{
         T altitude_floor = 20;  // m
         T randomization = 0;  // every factor uniform in [1 - r, 1 + r]
         T wind_speed_max = 0;  // m/s, constant horizontal wind, random direction
+        StartMode start = TRIMMED;
+        // RANDOM start: alpha and beta are sampled directly, so the airplane never starts stalled
+        T random_roll_max = T(1.0471975511965976);  // 60 deg
+        T random_pitch_max = T(0.3490658503988659);  // 20 deg
+        T random_rate_max = 0.5;  // rad/s
+        T random_airspeed_range[2] = {18, 32};  // m/s
+        T random_alpha_range[2] = {T(-0.06981317007977318), T(0.17453292519943295)};  // -4, 10 deg
+        T random_beta_max = T(0.13962634015954636);  // 8 deg
+        // clip of the error integrals, also their observation scale: about 20 s of 1 m/s, 5 m and 14 deg
+        T error_integral_limits[3] = {20, 100, 5};  // m, m s, rad s
         RewardConfig<T> reward;
     };
 
     // observation tags for RLtools: what the actor sees (PX4 estimates + last actions) and what the critic sees
     template <typename TI>
     struct ActorObservation{
-        static constexpr TI DIM = 20 + N_ACTUATORS * ACTION_HISTORY;
+        static constexpr TI DIM = 20 + N_INTEGRALS + N_ACTUATORS * ACTION_HISTORY;
     };
     template <typename TI>
     struct CriticObservation{

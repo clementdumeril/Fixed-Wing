@@ -49,19 +49,44 @@ namespace rl_tools{
 
     template <typename DEVICE, typename SPEC, typename RNG>
     void sample_initial_state(DEVICE& device, const fixed_wing::Environment<SPEC>& env, const typename fixed_wing::Environment<SPEC>::Parameters& p, typename fixed_wing::Environment<SPEC>::State& s, RNG& rng){
-        // trimmed flight at a random airspeed, perturbed in attitude and rates, and a setpoint (environment.py)
+        // TRIMMED: trimmed flight at a random airspeed, perturbed in attitude and rates, and a setpoint (environment.py);
+        // NEUTRAL: the same flight with neutral commands; RANDOM: wide flight conditions, never stalled (TaskConfig)
         using T = typename SPEC::T;
         const auto& c = env.config;
         auto uniform = [&](T lo, T hi){ return random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), lo, hi, rng); };
-        fixed_wing::Body<T> trimmed = fixed_wing::trim(p, uniform(c.airspeed_range[0], c.airspeed_range[1]));
-        T R[3][3], air[3], air_body[3];
-        fixed_wing::rotation_matrix(trimmed.orientation, R);
-        for(int i = 0; i < 3; i++) air[i] = trimmed.linear_velocity[i] - p.wind[i];
-        fixed_wing::rotate_inverse(R, air, air_body);  // the perturbation keeps alpha and beta at their trim values
-        T pitch = std::asin(fixed_wing::clip(R[2][0], T(-1), T(1)));
-        T course = uniform(T(-fixed_wing::PI), T(fixed_wing::PI));
-        fixed_wing::Body<T> body = trimmed;
-        fixed_wing::euler_quaternion(uniform(-c.roll_max, c.roll_max), pitch + uniform(-c.pitch_max, c.pitch_max), course, body.orientation);
+        fixed_wing::Body<T> body{};
+        T R[3][3], air_body[3], course, rate_max;
+        if(c.start == fixed_wing::RANDOM){
+            T airspeed = uniform(c.random_airspeed_range[0], c.random_airspeed_range[1]);
+            T alpha = uniform(c.random_alpha_range[0], c.random_alpha_range[1]);
+            T beta = uniform(-c.random_beta_max, c.random_beta_max);
+            // air-relative velocity in the body frame (x forward, y left, z up), inverse of air_data()
+            air_body[0] = airspeed * std::cos(alpha) * std::cos(beta);
+            air_body[1] = -airspeed * std::sin(beta);
+            air_body[2] = -airspeed * std::sin(alpha) * std::cos(beta);
+            course = uniform(T(-fixed_wing::PI), T(fixed_wing::PI));
+            fixed_wing::euler_quaternion(uniform(-c.random_roll_max, c.random_roll_max), uniform(-c.random_pitch_max, c.random_pitch_max), course, body.orientation);
+            T command[fixed_wing::N_ACTUATORS];
+            for(int i = 0; i < fixed_wing::N_ACTUATORS; i++) command[i] = uniform(T(-1), T(1));
+            fixed_wing::scale_action(p, command, body.actuators);
+            rate_max = c.random_rate_max;
+        }
+        else{
+            fixed_wing::Body<T> trimmed = fixed_wing::trim(p, uniform(c.airspeed_range[0], c.airspeed_range[1]));
+            T air[3];
+            fixed_wing::rotation_matrix(trimmed.orientation, R);
+            for(int i = 0; i < 3; i++) air[i] = trimmed.linear_velocity[i] - p.wind[i];
+            fixed_wing::rotate_inverse(R, air, air_body);  // the perturbation keeps alpha and beta at their trim values
+            T pitch = std::asin(fixed_wing::clip(R[2][0], T(-1), T(1)));
+            course = uniform(T(-fixed_wing::PI), T(fixed_wing::PI));
+            body = trimmed;
+            fixed_wing::euler_quaternion(uniform(-c.roll_max, c.roll_max), pitch + uniform(-c.pitch_max, c.pitch_max), course, body.orientation);
+            if(c.start == fixed_wing::NEUTRAL){
+                T neutral[fixed_wing::N_ACTUATORS] = {};
+                fixed_wing::scale_action(p, neutral, body.actuators);
+            }
+            rate_max = c.rate_max;
+        }
         body.position[0] = 0;
         body.position[1] = 0;
         body.position[2] = uniform(c.altitude_range[0], c.altitude_range[1]);
@@ -69,7 +94,7 @@ namespace rl_tools{
         fixed_wing::rotate(R, air_body, body.linear_velocity);
         for(int i = 0; i < 3; i++){
             body.linear_velocity[i] += p.wind[i];
-            body.angular_velocity[i] = uniform(-c.rate_max, c.rate_max);
+            body.angular_velocity[i] = uniform(-rate_max, rate_max);
         }
         T setpoint_airspeed = uniform(c.airspeed_range[0], c.airspeed_range[1]);
         T setpoint_altitude = fixed_wing::clip(body.position[2] + uniform(-c.altitude_change_max, c.altitude_change_max), c.altitude_range[0], c.altitude_range[1]);
@@ -83,7 +108,7 @@ namespace rl_tools{
         using T = typename SPEC::T;
         T a[fixed_wing::N_ACTUATORS];
         for(int i = 0; i < fixed_wing::N_ACTUATORS; i++) a[i] = get(action, 0, i);
-        fixed_wing::simulate(p, s, a, next);
+        fixed_wing::simulate_task(p, s, a, next);
         return p.dt;
     }
 

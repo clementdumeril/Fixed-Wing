@@ -34,6 +34,20 @@ python tools/export_scenarios.py build/scenarios_calm.txt
 ./build/train_sac build/scenarios_calm.txt runs/sac 0 1000000
 ```
 
+Options after the step count:
+
+- `--start trimmed|neutral|random`: how the training flights start. `trimmed` (default) is the Python setup;
+  `neutral` is the same flight with the surfaces at 0 and half throttle; `random` is any heading, bank ±60°,
+  pitch ±20°, airspeed 18–32 m/s, angle of attack −4° to 10° and sideslip ±8° (never stalled), random commands.
+- `--no-trim-reward`: no trim term in the reward, so that the policy finds trim on its own.
+- `--huber D`: Huber instead of square on the scaled airspeed, altitude and course errors.
+- `--alpha-weight W`: a cost on the angle of attack within 4° of the stall limits.
+
+The `train_sac_c256_b64_integral` target also gives the policy the time integrals of the three errors (63 inputs).
+Each run writes `evaluation.json` (the 100 Python test flights) and `evaluation_random.json` (100 random starts, the
+same for every run), the first 10 flights of each step by step (`flights.csv`, `flights_random.csv`) and the trained
+actor as C++ code (`actor.h`).
+
 `-DRL_TOOLS_DIR=<checkout>` uses a local RLtools instead. Without a BLAS library RLtools falls back to plain loops and
 the networks dominate the run time (under 20 steps/s here); with Intel MKL on one laptop core the training runs at
 about 60 steps/s with the Python network sizes and 600 steps/s with the L2F ones (`train_sac_small`: critic 64,
@@ -50,6 +64,7 @@ sbatch savio/build.slurm       # compute node: compile, export the test scenario
 sbatch savio/sweep.slurm       # 6 critic x batch sizes x 3 seeds, one core each, 1 M steps in calm air
 sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000   # one variant, 3 seeds, any number of steps
 sbatch savio/alpha_margin.slurm   # critic 256 x batch 64 with a margin to the stall in the reward, weights 0, 0.3, 1
+sbatch savio/random_start.slurm   # random start, no trim term, 10 seeds, with the actors and test flights saved
 ```
 
-Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv` and `evaluation.json`.
+Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.

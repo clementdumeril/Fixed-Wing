@@ -1,10 +1,17 @@
 // SAC on the fixed-wing task with RLtools: same task, network sizes and hyperparameters as python/examples/train_sac.py
 // (asymmetric actor-critic, gated reward curriculum with replay-buffer recomputation), then an evaluation on the
-// 100 test scenarios of the Python environment.
+// 100 test scenarios of the Python environment and on 100 random starts.
 //
-// train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W]
-//   scenarios.txt: tools/export_scenarios.py; out_dir gets config.json, progress.csv and evaluation.json
+// train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward]
+//           [--huber D]
+//   scenarios.txt: tools/export_scenarios.py; out_dir gets config.json, progress.csv, evaluation.json (Python
+//   scenarios) and evaluation_random.json (random starts, the same for every run), flights.csv and flights_random.csv
+//   (the first 10 test flights of each, step by step) and actor.h (the trained actor as C++ code)
 //   --alpha-weight: weight of the reward term that keeps a margin to the stall (RewardConfig::alpha_margin_weight)
+//   --start: how the training episodes start (TaskConfig::start)
+//   --no-trim-reward: no trim term in the reward, so that the policy finds trim on its own
+//   --huber: Huber instead of square on the scaled tracking errors (RewardConfig::huber_delta)
+// The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 #include <rl_tools/operations/cpu_mux.h>
 
 #include <fixed_wing/operations_generic.h>
@@ -19,6 +26,14 @@
 
 #include <rl_tools/rl/algorithms/sac/loop/core/config.h>
 #include <rl_tools/rl/algorithms/sac/loop/core/operations_generic.h>
+
+// export of the trained actor as C++ code (weights included), the checkpoint format of L2F
+#include <rl_tools/numeric_types/persist_code.h>
+#include <rl_tools/containers/tensor/persist_code.h>
+#include <rl_tools/nn/layers/dense/persist_code.h>
+#include <rl_tools/nn/layers/sample_and_squash/persist_code.h>
+#include <rl_tools/nn_models/mlp/persist_code.h>
+#include <rl_tools/nn_models/sequential/persist_code.h>
 
 #include <algorithm>
 #include <array>
@@ -103,7 +118,8 @@ struct Curriculum{
     }
     fixed_wing::RewardConfig<T_ENV> at_stage(int stage) const {
         T_ENV x = T_ENV(std::min(stage, n_stages)) / n_stages;
-        auto geometric = [x](T_ENV a, T_ENV b){ return a * std::pow(b / a, x); };
+        // a weight kept constant (0 for --no-trim-reward) stays as it is: 0 * (0 / 0)^x would be NaN
+        auto geometric = [x](T_ENV a, T_ENV b){ return a == b ? a : a * std::pow(b / a, x); };
         fixed_wing::RewardConfig<T_ENV> c = initial;
         c.airspeed_weight = geometric(initial.airspeed_weight, target.airspeed_weight);
         c.altitude_weight = geometric(initial.altitude_weight, target.altitude_weight);
@@ -191,8 +207,34 @@ std::vector<Scenario> load_scenarios(const std::string& path){
 
 constexpr TI N_SCENARIOS = 100;
 
+std::vector<Scenario> random_scenarios(DEVICE& device, TI seed){
+    // test set of RANDOM starts: a fixed seed, so that every run is evaluated on the same flights
+    ENVIRONMENT env;
+    rlt::init(device, env);
+    env.config.start = fixed_wing::RANDOM;
+    ENVIRONMENT::Parameters p;
+    fixed_wing::task_parameters(env.config, p);
+    RNG rng;
+    rlt::malloc(device, rng);
+    rlt::init(device, rng, seed);
+    std::vector<Scenario> scenarios(N_SCENARIOS);
+    for(auto& s: scenarios){
+        ENVIRONMENT::State state;
+        rlt::sample_initial_state(device, env, p, state, rng);
+        s.body = state.body;
+        s.airspeed = state.setpoint_airspeed;
+        s.altitude = state.setpoint_altitude;
+        s.course = state.setpoint_course;
+    }
+    rlt::free(device, rng);
+    return scenarios;
+}
+
+constexpr TI N_RECORDED = 10;  // test flights written to the flights CSV, for plots
+
 template <typename ACTOR>
-std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scenario>& scenarios, RNG& rng){
+std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scenario>& scenarios, RNG& rng,
+                     const std::filesystem::path& flights_csv){
     using EVAL_ACTOR = typename ACTOR::template CHANGE_BATCH_SIZE<TI, N_SCENARIOS>::template CHANGE_CAPABILITY<rlt::nn::capability::Forward<true>>;
     typename EVAL_ACTOR::template State<true> actor_state;
     typename EVAL_ACTOR::template Buffer<true> actor_buffer;
@@ -218,6 +260,21 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
         fixed_wing::start_state(p, s.body, s.airspeed, s.altitude, s.course, states[k]);
         for(int i = 0; i < 4; i++) previous[k][i] = states[k].action_history[fixed_wing::ACTION_HISTORY - 1][i];
     }
+    std::ofstream flights(flights_csv);
+    flights << "scenario,t,x,y,altitude,roll_deg,pitch_deg,heading_deg,airspeed,alpha_deg,beta_deg,course_deg,"
+               "setpoint_airspeed,setpoint_altitude,setpoint_course_deg,aileron,elevator,rudder,throttle,termination\n";
+    auto record = [&](TI k, T_ENV t, const ENVIRONMENT::State& s, const T_ENV a[4], int termination){
+        const T_ENV deg = 180 / fixed_wing::PI;
+        auto m = fixed_wing::measurements(p, s.body);
+        auto air = fixed_wing::air_data(p, s.body);
+        flights << k << "," << t << "," << s.body.position[0] << "," << s.body.position[1] << "," << s.body.position[2]
+                << "," << std::atan2(m.R[2][1], m.R[2][2]) * deg << "," << std::asin(fixed_wing::clip(m.R[2][0], T_ENV(-1), T_ENV(1))) * deg
+                << "," << std::atan2(m.R[1][0], m.R[0][0]) * deg << "," << air.airspeed << "," << air.alpha * deg
+                << "," << air.beta * deg << "," << m.course * deg << "," << s.setpoint_airspeed << "," << s.setpoint_altitude
+                << "," << s.setpoint_course * deg;
+        for(int i = 0; i < 4; i++) flights << "," << a[i];
+        flights << "," << termination << "\n";
+    };
     for(TI step = 0; step < ENVIRONMENT::EPISODE_STEP_LIMIT; step++){
         for(TI k = 0; k < N_SCENARIOS; k++){
             fixed_wing::observe_actor(p, states[k], [&](int j, T_ENV v){ rlt::set(observations, k, j, T(v)); });
@@ -230,7 +287,7 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
             T_ENV a[4];
             for(int i = 0; i < 4; i++) a[i] = fixed_wing::clip(T_ENV(rlt::get(actions, k, i)), T_ENV(-1), T_ENV(1));
             ENVIRONMENT::State next;
-            fixed_wing::simulate(p, states[k], a, next);
+            fixed_wing::simulate_task(p, states[k], a, next);
             returns[k] += fixed_wing::reward(p, states[k], a, next, env.config);
             reason[k] = fixed_wing::termination(p, next, env.config);
             auto m = fixed_wing::measurements(p, next.body);
@@ -241,6 +298,7 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
             double change = 0;
             for(int i = 0; i < 4; i++){ change += std::abs(a[i] - previous[k][i]); previous[k][i] = a[i]; }
             change_sum[k] += change / 4;
+            if(k < N_RECORDED) record(k, (step + 1) * p.dt, next, a, reason[k]);  // state after the step, commands of it
             states[k] = next;
         }
     }
@@ -282,9 +340,20 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<Scena
     return json.str();
 }
 
+template <typename ACTOR>
+void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path& path){
+    // the trained actor as C++ code with its weights, to fly it again (plots, deployment) without retraining
+    using FORWARD = typename ACTOR::template CHANGE_BATCH_SIZE<TI, 1>::template CHANGE_CAPABILITY<rlt::nn::capability::Forward<true>>;
+    FORWARD forward;
+    rlt::malloc(device, forward);
+    rlt::copy(device, device, actor, forward);
+    std::ofstream(path) << rlt::save_code(device, forward, "fixed_wing::actor", true);
+    rlt::free(device, forward);
+}
+
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -294,14 +363,25 @@ int run(int argc, char** argv){
     TI steps = argc > 4 ? std::stoul(argv[4]) : 1000000;
     if(steps > LOOP_CORE_PARAMETERS::STEP_LIMIT) throw std::runtime_error("steps above STEP_LIMIT_MAX, recompile with a larger one");
     T_ENV alpha_weight = 0;
+    std::string start_name = "trimmed";
+    bool trim_reward = true;
+    T_ENV huber_delta = 0;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
         if(option == "--alpha-weight" && i + 1 < argc) alpha_weight = std::stod(argv[++i]);
+        else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
+        else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
+        else if(option == "--no-trim-reward") trim_reward = false;
         else throw std::runtime_error("unknown option " + option);
     }
+    const std::map<std::string, fixed_wing::StartMode> start_modes = {
+        {"trimmed", fixed_wing::TRIMMED}, {"neutral", fixed_wing::NEUTRAL}, {"random", fixed_wing::RANDOM}};
+    if(!start_modes.count(start_name)) throw std::runtime_error("unknown start " + start_name);
     std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"steps\": " << steps
         << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH
-        << ",\n  \"alpha_margin_weight\": " << alpha_weight << "\n}\n";
+        << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
+        << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
+        << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false") << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -311,10 +391,23 @@ int run(int argc, char** argv){
     Curriculum curriculum;
     curriculum.initial.alpha_margin_weight = alpha_weight;  // constant: not part of the curriculum
     curriculum.target.alpha_margin_weight = alpha_weight;
+    curriculum.initial.huber_delta = huber_delta;
+    curriculum.target.huber_delta = huber_delta;
+    if(!trim_reward){
+        curriculum.initial.trim_weight = 0;
+        curriculum.target.trim_weight = 0;
+    }
+    for(int s = 0; s <= curriculum.n_stages; s++){
+        auto c = curriculum.at_stage(s);
+        for(T_ENV w: {c.airspeed_weight, c.altitude_weight, c.course_weight, c.sideslip_weight, c.action_change_weight, c.trim_weight, c.alpha_margin_weight}){
+            if(!std::isfinite(w)) throw std::runtime_error("reward weight not finite at curriculum stage " + std::to_string(s));
+        }
+    }
     int stage = 0;
     auto set_reward = [&](const fixed_wing::RewardConfig<T_ENV>& c){
         for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++) rlt::get(ts.off_policy_runner.envs, 0, i).config.reward = c;
     };
+    for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++) rlt::get(ts.off_policy_runner.envs, 0, i).config.start = start_modes.at(start_name);
     set_reward(curriculum.at_stage(0));
 
     std::ofstream progress(out_dir / "progress.csv");
@@ -344,9 +437,13 @@ int run(int argc, char** argv){
         }
     }
     double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    std::string result = evaluate(device, rlt::get_actor(ts), scenarios, ts.rng);
+    save_actor(device, rlt::get_actor(ts), out_dir / "actor.h");
+    std::string result = evaluate(device, rlt::get_actor(ts), scenarios, ts.rng, out_dir / "flights.csv");
     std::ofstream(out_dir / "evaluation.json") << result;
-    std::cout << result << "training seconds: " << seconds << std::endl;
+    std::string result_random = evaluate(device, rlt::get_actor(ts), random_scenarios(device, 12345), ts.rng,
+                                         out_dir / "flights_random.csv");
+    std::ofstream(out_dir / "evaluation_random.json") << result_random;
+    std::cout << result << "random starts:\n" << result_random << "training seconds: " << seconds << std::endl;
     rlt::free(device, ts);
     return 0;
 }
