@@ -58,6 +58,13 @@ target_link_libraries(train_sac_c256_b64_integral PRIVATE RLtools::RLtools)
 target_compile_definitions(train_sac_c256_b64_integral PRIVATE FW_CRITIC_HIDDEN=256 FW_BATCH=64 FW_ERROR_INTEGRAL=1)
 list(APPEND TRAIN_TARGETS train_sac_c256_b64_integral)
 
+# critic 256, batch 64, on the position and velocity tracking task
+add_executable(train_sac_c256_b64_tracking src/train_sac.cpp)
+target_include_directories(train_sac_c256_b64_tracking PRIVATE include)
+target_link_libraries(train_sac_c256_b64_tracking PRIVATE RLtools::RLtools)
+target_compile_definitions(train_sac_c256_b64_tracking PRIVATE FW_CRITIC_HIDDEN=256 FW_BATCH=64 FW_TRACKING=1)
+list(APPEND TRAIN_TARGETS train_sac_c256_b64_tracking)
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)

@@ -96,10 +96,31 @@ namespace rl_tools{
             body.linear_velocity[i] += p.wind[i];
             body.angular_velocity[i] = uniform(-rate_max, rate_max);
         }
-        T setpoint_airspeed = uniform(c.airspeed_range[0], c.airspeed_range[1]);
-        T setpoint_altitude = fixed_wing::clip(body.position[2] + uniform(-c.altitude_change_max, c.altitude_change_max), c.altitude_range[0], c.altitude_range[1]);
-        T setpoint_course = fixed_wing::wrap(course + uniform(-c.course_change_max, c.course_change_max));
-        fixed_wing::start_state(p, body, setpoint_airspeed, setpoint_altitude, setpoint_course, s);
+        if constexpr(FW_TRACKING){
+            // a reference point near the airplane, flying straight at constant velocity; the setpoints follow it
+            T heading = fixed_wing::wrap(course + uniform(-c.course_change_max, c.course_change_max));
+            T speed = uniform(c.reference_speed_range[0], c.reference_speed_range[1]);
+            T bearing = uniform(T(-fixed_wing::PI), T(fixed_wing::PI));
+            T distance = uniform(T(0), c.reference_offset_max);
+            T altitude = fixed_wing::clip(body.position[2] + uniform(-c.reference_altitude_offset_max, c.reference_altitude_offset_max),
+                                          c.reference_altitude_range[0], c.reference_altitude_range[1]);
+            T duration = fixed_wing::Environment<SPEC>::EPISODE_STEP_LIMIT * p.dt;
+            T climb = fixed_wing::clip(uniform(-c.reference_climb_max, c.reference_climb_max),
+                                       (c.reference_altitude_range[0] - altitude) / duration, (c.reference_altitude_range[1] - altitude) / duration);
+            fixed_wing::start_state(p, body, std::sqrt(speed * speed + climb * climb), altitude, heading, s);
+            s.reference_position[0] = body.position[0] + distance * std::cos(bearing);
+            s.reference_position[1] = body.position[1] + distance * std::sin(bearing);
+            s.reference_position[2] = altitude;
+            s.reference_velocity[0] = speed * std::cos(heading);
+            s.reference_velocity[1] = speed * std::sin(heading);
+            s.reference_velocity[2] = climb;
+        }
+        else{
+            T setpoint_airspeed = uniform(c.airspeed_range[0], c.airspeed_range[1]);
+            T setpoint_altitude = fixed_wing::clip(body.position[2] + uniform(-c.altitude_change_max, c.altitude_change_max), c.altitude_range[0], c.altitude_range[1]);
+            T setpoint_course = fixed_wing::wrap(course + uniform(-c.course_change_max, c.course_change_max));
+            fixed_wing::start_state(p, body, setpoint_airspeed, setpoint_altitude, setpoint_course, s);
+        }
     }
 
     template <typename DEVICE, typename SPEC, typename ACTION_SPEC, typename RNG>

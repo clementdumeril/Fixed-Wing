@@ -11,6 +11,11 @@
 #ifndef FW_ERROR_INTEGRAL
 #define FW_ERROR_INTEGRAL 0
 #endif
+// 1: position and velocity tracking (train_sac_*_tracking): a reference point moves in a straight line at constant
+// velocity, and the airplane has to reach it and follow it. 0: airspeed, altitude and course setpoints (Python task).
+#ifndef FW_TRACKING
+#define FW_TRACKING 0
+#endif
 
 namespace fixed_wing{
     // order of the actions and of Body::actuators
@@ -20,6 +25,8 @@ namespace fixed_wing{
     constexpr int MAX_LATENCY = 4;
     constexpr int ACTION_HISTORY = 10;
     constexpr int N_INTEGRALS = FW_ERROR_INTEGRAL ? 3 : 0;
+    // errors at the start of the observation: airspeed, altitude, sin and cos of course; or position and velocity
+    constexpr int N_TASK_ERRORS = FW_TRACKING ? 6 : 4;
 
     // aerodynamic coefficients, in the order of airplane.Aerodynamics in Python (randomization factors follow it)
     enum Coefficient{
@@ -68,10 +75,12 @@ namespace fixed_wing{
     struct State{
         Body<T> body;
         T action_buffer[MAX_LATENCY][N_ACTUATORS];  // commands sent but not applied yet, oldest first, physical units
-        // setpoint, constant over an episode
+        // setpoint, constant over an episode (tracking: the speed, altitude and course of the reference, which move)
         T setpoint_airspeed;
         T setpoint_altitude;
         T setpoint_course;  // rad, direction of the ground velocity, counterclockwise from world x
+        T reference_position[3];  // tracking only: the point to reach, world frame, moves at reference_velocity
+        T reference_velocity[3];  // world frame, constant over an episode
         T trim_action[N_ACTUATORS];  // normalized commands of steady level flight at the setpoint airspeed
         T action_history[ACTION_HISTORY][N_ACTUATORS];  // normalized, oldest first; the last row is the previous action
         T error_integral[3];  // time integrals of the airspeed, altitude and course errors, clipped (simulate_task)
@@ -105,6 +114,13 @@ namespace fixed_wing{
         // 0: squared airspeed, altitude and course errors. > 0: Huber (smooth L1) on the scaled errors, quadratic below
         // huber_delta and linear above, so that small errors still cost (the square is flat near 0)
         T huber_delta = 0;
+        // tracking task: errors of position and ground velocity to the reference, replacing airspeed, altitude, course
+        T position_scale = 20;  // m
+        T velocity_scale = 4;  // m/s
+        T position_weight = 0.6;
+        T velocity_weight = 0.3;
+        T far_position_scale = 100;  // m
+        T far_velocity_scale = 15;  // m/s
     };
 
     // how an episode starts (sample_initial_state)
@@ -142,13 +158,21 @@ namespace fixed_wing{
         T random_beta_max = T(0.13962634015954636);  // 8 deg
         // clip of the error integrals, also their observation scale: about 20 s of 1 m/s, 5 m and 14 deg
         T error_integral_limits[3] = {20, 100, 5};  // m, m s, rad s
+        // tracking task: the reference starts up to 50 m away horizontally and 15 m vertically, flies at 20-28 m/s
+        // within 90 deg of the airplane's heading, and climbs or descends at up to 1 m/s inside 40-140 m of altitude
+        T reference_offset_max = 50;  // m
+        T reference_altitude_offset_max = 15;  // m
+        T reference_speed_range[2] = {20, 28};  // m/s, horizontal
+        T reference_climb_max = 1;  // m/s
+        T reference_altitude_range[2] = {40, 140};  // m, over the 30 s of an episode
+        T position_error_max = 300;  // m: farther from the reference, the flight ends
         RewardConfig<T> reward;
     };
 
     // observation tags for RLtools: what the actor sees (PX4 estimates + last actions) and what the critic sees
     template <typename TI>
     struct ActorObservation{
-        static constexpr TI DIM = 20 + N_INTEGRALS + N_ACTUATORS * ACTION_HISTORY;
+        static constexpr TI DIM = N_TASK_ERRORS + 16 + N_INTEGRALS + N_ACTUATORS * ACTION_HISTORY;
     };
     template <typename TI>
     struct CriticObservation{

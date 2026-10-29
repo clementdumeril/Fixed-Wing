@@ -360,17 +360,40 @@ namespace fixed_wing{
         e_course = wrap(m.course - s.setpoint_course);
     }
 
+    template <typename T>
+    void tracking_errors(const State<T>& s, T e_position[3], T e_velocity[3]){
+        // tracking task: position and ground velocity minus the reference's, world frame
+        for(int i = 0; i < 3; i++){
+            e_position[i] = s.body.position[i] - s.reference_position[i];
+            e_velocity[i] = s.body.linear_velocity[i] - s.reference_velocity[i];
+        }
+    }
+
+    template <typename T>
+    T norm3(const T v[3]){ return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
+
     template <typename T, typename WRITE>
     void observe_actor(const Parameters<T>& p, const State<T>& s, WRITE write){
         // same layout as environment.observe_actor; noise-free (observation noise is not ported yet)
         Measurements<T> m = measurements(p, s.body);
-        T e_airspeed, e_altitude, e_course;
-        errors(m, s, e_airspeed, e_altitude, e_course);
         int k = 0;
-        write(k++, e_airspeed / 5);
-        write(k++, e_altitude / 20);
-        write(k++, std::sin(e_course));
-        write(k++, std::cos(e_course));
+        if constexpr(FW_TRACKING){
+            // in the body frame, so that the policy does not depend on the heading; position clipped at 200 m
+            T e_position[3], e_velocity[3], body[3];
+            tracking_errors(s, e_position, e_velocity);
+            rotate_inverse(m.R, e_position, body);
+            for(int i = 0; i < 3; i++) write(k++, clip(body[i] / T(20), T(-10), T(10)));
+            rotate_inverse(m.R, e_velocity, body);
+            for(int i = 0; i < 3; i++) write(k++, body[i] / 5);
+        }
+        else{
+            T e_airspeed, e_altitude, e_course;
+            errors(m, s, e_airspeed, e_altitude, e_course);
+            write(k++, e_airspeed / 5);
+            write(k++, e_altitude / 20);
+            write(k++, std::sin(e_course));
+            write(k++, std::cos(e_course));
+        }
         for(int i = 0; i < 3; i++) for(int j = 0; j < 3; j++) write(k++, m.R[i][j]);
         for(int i = 0; i < 3; i++) write(k++, m.rates[i] / T(PI));
         for(int i = 0; i < 3; i++) write(k++, m.velocity_body[i] / 25);
@@ -405,28 +428,47 @@ namespace fixed_wing{
     }
 
     template <typename T>
-    T reward_from_errors(T e_airspeed, T e_altitude, T e_course, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
+    T tracking_cost(T x, const RewardConfig<T>& c){
+        // scaled tracking error: square, or Huber with the same value near 1
+        if(c.huber_delta <= 0) return x * x;
+        return std::abs(x) < c.huber_delta ? x * x / (2 * c.huber_delta) : std::abs(x) - c.huber_delta / 2;
+    }
+
+    template <typename T>
+    T reward_from_cost(T tracking, T far, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
+        // the terms shared by both tasks around the tracking cost and the far penalty of each
         auto sq = [](T x){ return x * x; };
-        auto tracking = [&](T x){  // scaled tracking error: square, or Huber with the same value near 1
-            if(c.huber_delta <= 0) return sq(x);
-            return std::abs(x) < c.huber_delta ? sq(x) / (2 * c.huber_delta) : std::abs(x) - c.huber_delta / 2;
-        };
-        T cost = c.airspeed_weight * tracking(e_airspeed / c.airspeed_scale)
-               + c.altitude_weight * tracking(e_altitude / c.altitude_scale)
-               + c.course_weight * tracking(e_course / c.course_scale)
+        T cost = tracking
                + c.sideslip_weight * sq(beta / c.sideslip_scale)
                + c.alpha_margin_weight * sq(alpha_excess(alpha, c) / c.alpha_margin_scale)
                + c.action_change_weight * action_change_squared
                + c.trim_weight * trim_deviation_squared;
-        T far = c.far_weight * (std::fmin(std::abs(e_airspeed) / c.far_airspeed_scale, T(1))
-                              + std::fmin(std::abs(e_altitude) / c.far_altitude_scale, T(1))
-                              + std::fmin(std::abs(e_course) / c.far_course_scale, T(1)));
         T cap = c.cost_cap * c.survival;
-        return c.survival - cap * std::tanh(cost / cap) - far;
+        return c.survival - cap * std::tanh(cost / cap) - c.far_weight * far;
+    }
+
+    template <typename T>
+    T reward_from_errors(T e_airspeed, T e_altitude, T e_course, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
+        T tracking = c.airspeed_weight * tracking_cost(e_airspeed / c.airspeed_scale, c)
+                   + c.altitude_weight * tracking_cost(e_altitude / c.altitude_scale, c)
+                   + c.course_weight * tracking_cost(e_course / c.course_scale, c);
+        T far = std::fmin(std::abs(e_airspeed) / c.far_airspeed_scale, T(1))
+              + std::fmin(std::abs(e_altitude) / c.far_altitude_scale, T(1))
+              + std::fmin(std::abs(e_course) / c.far_course_scale, T(1));
+        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c);
+    }
+
+    template <typename T>
+    T reward_from_tracking_errors(T position_error, T velocity_error, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
+        // tracking task: distances to the reference position [m] and velocity [m/s]
+        T tracking = c.position_weight * tracking_cost(position_error / c.position_scale, c)
+                   + c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);
+        T far = std::fmin(position_error / c.far_position_scale, T(1)) + std::fmin(velocity_error / c.far_velocity_scale, T(1));
+        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c);
     }
 
     // why a flight ends: 0 = still flying
-    enum Termination{FLYING = 0, DIVERGED, LOW_ALTITUDE, ALPHA, AIRSPEED, ALTITUDE};
+    enum Termination{FLYING = 0, DIVERGED, LOW_ALTITUDE, ALPHA, AIRSPEED, ALTITUDE, POSITION};
 
     template <typename T>
     Termination termination(const Parameters<T>& p, const State<T>& s, const TaskConfig<T>& config){
@@ -436,6 +478,10 @@ namespace fixed_wing{
         if(!(config.alpha_range[0] <= a.alpha && a.alpha <= config.alpha_range[1])) return ALPHA;
         if(!(config.airspeed_limits[0] <= a.airspeed && a.airspeed <= config.airspeed_limits[1])) return AIRSPEED;
         if(std::abs(s.body.position[2] - s.setpoint_altitude) > config.altitude_error_max) return ALTITUDE;
+        if constexpr(FW_TRACKING){
+            T dx = s.body.position[0] - s.reference_position[0], dy = s.body.position[1] - s.reference_position[1];
+            if(std::sqrt(dx * dx + dy * dy) > config.position_error_max) return POSITION;
+        }
         return FLYING;
     }
 
@@ -443,9 +489,6 @@ namespace fixed_wing{
     T reward(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS], const State<T>& next, const TaskConfig<T>& config){
         // on the state after the step; zero when the flight ends, as in FixedWingEnv.step
         if(termination(p, next, config) != FLYING) return 0;
-        Measurements<T> m = measurements(p, next.body);
-        T e_airspeed, e_altitude, e_course;
-        errors(m, next, e_airspeed, e_altitude, e_course);
         AirData<T> air = air_data(p, next.body);
         T change = 0, deviation = 0;
         for(int i = 0; i < N_ACTUATORS; i++){
@@ -453,7 +496,17 @@ namespace fixed_wing{
             change += (a - state.action_history[ACTION_HISTORY - 1][i]) * (a - state.action_history[ACTION_HISTORY - 1][i]);
             deviation += (a - state.trim_action[i]) * (a - state.trim_action[i]);
         }
-        return reward_from_errors(e_airspeed, e_altitude, e_course, air.beta, air.alpha, change, deviation, config.reward);
+        if constexpr(FW_TRACKING){
+            T e_position[3], e_velocity[3];
+            tracking_errors(next, e_position, e_velocity);
+            return reward_from_tracking_errors(norm3(e_position), norm3(e_velocity), air.beta, air.alpha, change, deviation, config.reward);
+        }
+        else{
+            Measurements<T> m = measurements(p, next.body);
+            T e_airspeed, e_altitude, e_course;
+            errors(m, next, e_airspeed, e_altitude, e_course);
+            return reward_from_errors(e_airspeed, e_altitude, e_course, air.beta, air.alpha, change, deviation, config.reward);
+        }
     }
 
     template <typename T>
@@ -462,9 +515,6 @@ namespace fixed_wing{
         if(terminated) return 0;
         const int n = ActorObservation<int>::DIM;
         const int critic = CriticObservation<int>::DIM;
-        T e_airspeed = next_observation[0] * 5;
-        T e_altitude = next_observation[1] * 20;
-        T e_course = std::atan2(next_observation[2], next_observation[3]);
         T alpha = next_observation[n] * T(0.3);
         T beta = next_observation[n + 1] * T(0.3);
         T change = 0, deviation = 0;
@@ -475,7 +525,18 @@ namespace fixed_wing{
             change += (a - previous) * (a - previous);
             deviation += (a - trim_action) * (a - trim_action);
         }
-        return reward_from_errors(e_airspeed, e_altitude, e_course, beta, alpha, change, deviation, c);
+        if constexpr(FW_TRACKING){
+            // the norms do not depend on the frame; the position is clipped at 200 m in the observation
+            T position[3] = {next_observation[0] * 20, next_observation[1] * 20, next_observation[2] * 20};
+            T velocity[3] = {next_observation[3] * 5, next_observation[4] * 5, next_observation[5] * 5};
+            return reward_from_tracking_errors(norm3(position), norm3(velocity), beta, alpha, change, deviation, c);
+        }
+        else{
+            T e_airspeed = next_observation[0] * 5;
+            T e_altitude = next_observation[1] * 20;
+            T e_course = std::atan2(next_observation[2], next_observation[3]);
+            return reward_from_errors(e_airspeed, e_altitude, e_course, beta, alpha, change, deviation, c);
+        }
     }
 
     template <typename T>
@@ -492,6 +553,11 @@ namespace fixed_wing{
     void simulate_task(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS], State<T>& next){
         // simulate, then the error integrals: they need the setpoint, so they belong to the task, not to the physics
         simulate(p, state, action, next);
+        if constexpr(FW_TRACKING){
+            // the reference moves on; the altitude setpoint follows it (termination on the altitude error)
+            for(int i = 0; i < 3; i++) next.reference_position[i] = state.reference_position[i] + state.reference_velocity[i] * p.dt;
+            next.setpoint_altitude = next.reference_position[2];
+        }
         Measurements<T> m = measurements(p, next.body);
         T e[3];
         errors(m, next, e[0], e[1], e[2]);
@@ -525,6 +591,10 @@ namespace fixed_wing{
         T previous[N_ACTUATORS];
         normalize_action(p, body.actuators, previous);
         for(int h = 0; h < ACTION_HISTORY; h++) for(int i = 0; i < N_ACTUATORS; i++) s.action_history[h][i] = previous[i];
-        for(int i = 0; i < 3; i++) s.error_integral[i] = 0;
+        for(int i = 0; i < 3; i++){
+            s.error_integral[i] = 0;
+            s.reference_position[i] = 0;  // tracking task: set by sample_initial_state
+            s.reference_velocity[i] = 0;
+        }
     }
 }
