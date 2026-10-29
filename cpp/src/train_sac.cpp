@@ -73,10 +73,14 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #ifndef FW_BATCH
 #define FW_BATCH 256
 #endif
+// discount factor: the critic sees about 1 / (1 - gamma) steps ahead, 100 steps = 2 s for 0.99
+#ifndef FW_GAMMA
+#define FW_GAMMA 0.99
+#endif
 
 struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
     struct SAC_PARAMETERS: rlt::rl::algorithms::sac::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT::ACTION_DIM>{
-        static constexpr T GAMMA = 0.99;
+        static constexpr T GAMMA = FW_GAMMA;
         static constexpr TI ACTOR_BATCH_SIZE = FW_BATCH;
         static constexpr TI CRITIC_BATCH_SIZE = FW_BATCH;
         static constexpr T ALPHA = 1.0;  // initial entropy coefficient, as stable-baselines3 "auto"
@@ -422,7 +426,7 @@ int run(int argc, char** argv){
         {"trimmed", fixed_wing::TRIMMED}, {"neutral", fixed_wing::NEUTRAL}, {"random", fixed_wing::RANDOM}};
     if(!start_modes.count(start_name)) throw std::runtime_error("unknown start " + start_name);
     std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"steps\": " << steps
-        << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH
+        << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH << ",\n  \"gamma\": " << FW_GAMMA
         << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
         << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
         << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")

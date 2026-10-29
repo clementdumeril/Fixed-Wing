@@ -75,6 +75,7 @@ sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000   # one variant,
 sbatch savio/alpha_margin.slurm   # critic 256 x batch 64 with a margin to the stall in the reward, weights 0, 0.3, 1
 sbatch savio/random_start.slurm   # random start, no trim term, 10 seeds, with the actors and test flights saved
 sbatch savio/tracking.slurm       # position and velocity tracking, 3 reward settings x 3 seeds
+sbatch savio/tracking_gamma.slurm # the same task with a discount factor of 0.995 and 0.998, 3 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
