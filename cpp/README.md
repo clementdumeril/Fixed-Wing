@@ -50,7 +50,9 @@ starts up to 50 m from the airplane and flies straight at 20–28 m/s, within 90
 descending at up to 1 m/s; the airplane has to reach it and follow it. The policy sees the position and velocity errors
 in the body frame (62 inputs), and the reward penalizes the distances to the reference position and velocity. Its test
 A is 100 normal flights (neutral start) instead of the Python scenarios, and its evaluations add `position_rmse` [m]
-and `velocity_rmse` [m/s]. This task exists in C++ only.
+and `velocity_rmse` [m/s]. `--position-scale S` sets the scale of the position cost (default 50 m) and
+`--position-linear W` adds a cost linear in the distance, outside the saturation of the reward. This task exists in
+C++ only.
 Each run writes `evaluation.json` (the 100 Python test flights) and `evaluation_random.json` (100 random starts, the
 same for every run), the first 10 flights of each step by step (`flights.csv`, `flights_random.csv`) and the trained
 actor as C++ code (`actor.h`).
@@ -72,7 +74,7 @@ sbatch savio/sweep.slurm       # 6 critic x batch sizes x 3 seeds, one core each
 sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000   # one variant, 3 seeds, any number of steps
 sbatch savio/alpha_margin.slurm   # critic 256 x batch 64 with a margin to the stall in the reward, weights 0, 0.3, 1
 sbatch savio/random_start.slurm   # random start, no trim term, 10 seeds, with the actors and test flights saved
-sbatch savio/tracking.slurm       # position and velocity tracking, random start, 10 seeds
+sbatch savio/tracking.slurm       # position and velocity tracking, 3 reward settings x 3 seeds
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.

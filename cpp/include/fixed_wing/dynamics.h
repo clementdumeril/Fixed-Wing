@@ -464,7 +464,8 @@ namespace fixed_wing{
         T tracking = c.position_weight * tracking_cost(position_error / c.position_scale, c)
                    + c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);
         T far = std::fmin(position_error / c.far_position_scale, T(1)) + std::fmin(velocity_error / c.far_velocity_scale, T(1));
-        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c);
+        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c)
+             - c.position_linear_weight * std::fmin(position_error / c.far_position_scale, T(1));
     }
 
     // why a flight ends: 0 = still flying

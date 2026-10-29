@@ -115,7 +115,12 @@ namespace fixed_wing{
         // huber_delta and linear above, so that small errors still cost (the square is flat near 0)
         T huber_delta = 0;
         // tracking task: errors of position and ground velocity to the reference, replacing airspeed, altitude, course
-        T position_scale = 20;  // m
+        // 50 m: the cost keeps growing up to about 80 m. With 20 m it saturated (tanh) beyond about 26 m, and the
+        // policy learned to fly at the reference velocity about 55 m away instead of reaching the point
+        T position_scale = 50;  // m
+        // a cost linear in the distance to the reference, outside the saturation: weight x min(distance / 100 m, 1).
+        // At most 0.3: survival 1 - cap 0.5 - far 0.2 - 0.3 keeps the reward of a step >= 0, so ending a flight never pays
+        T position_linear_weight = 0;
         T velocity_scale = 4;  // m/s
         T position_weight = 0.6;
         T velocity_weight = 0.3;

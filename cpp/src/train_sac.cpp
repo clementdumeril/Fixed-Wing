@@ -3,7 +3,7 @@
 // 100 test scenarios of the Python environment and on 100 random starts.
 //
 // train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward]
-//           [--huber D]
+//           [--huber D] [--position-scale S] [--position-linear W]
 //   scenarios.txt: tools/export_scenarios.py; out_dir gets config.json, progress.csv, evaluation.json (Python
 //   scenarios) and evaluation_random.json (random starts, the same for every run), flights.csv and flights_random.csv
 //   (the first 10 test flights of each, step by step) and actor.h (the trained actor as C++ code)
@@ -11,6 +11,8 @@
 //   --start: how the training episodes start (TaskConfig::start)
 //   --no-trim-reward: no trim term in the reward, so that the policy finds trim on its own
 //   --huber: Huber instead of square on the scaled tracking errors (RewardConfig::huber_delta)
+//   --position-scale, --position-linear: tracking task, scale of the position cost and weight of the linear distance
+//   cost (RewardConfig::position_scale, position_linear_weight)
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -109,7 +111,8 @@ struct Curriculum{
     fixed_wing::RewardConfig<T_ENV> initial, target;
     TI period = 100000;
     int n_stages = 5;
-    T_ENV advance_error = FW_TRACKING ? 20 : 15 * fixed_wing::PI / 180;  // distance to the reference [m], course [rad]
+    // distance to the reference [m], or course [rad]; the mean distance includes the approach from up to 50 m away
+    T_ENV advance_error = FW_TRACKING ? 40 : 15 * fixed_wing::PI / 180;
     Curriculum(){
         target.airspeed_weight = 1.2;
         target.altitude_weight = 1.2;
@@ -389,7 +392,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -402,14 +405,19 @@ int run(int argc, char** argv){
     std::string start_name = "trimmed";
     bool trim_reward = true;
     T_ENV huber_delta = 0;
+    fixed_wing::RewardConfig<T_ENV> defaults;
+    T_ENV position_scale = defaults.position_scale, position_linear = defaults.position_linear_weight;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
         if(option == "--alpha-weight" && i + 1 < argc) alpha_weight = std::stod(argv[++i]);
+        else if(option == "--position-scale" && i + 1 < argc) position_scale = std::stod(argv[++i]);
+        else if(option == "--position-linear" && i + 1 < argc) position_linear = std::stod(argv[++i]);
         else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
         else if(option == "--no-trim-reward") trim_reward = false;
         else throw std::runtime_error("unknown option " + option);
     }
+    if(position_linear > 0.3) throw std::runtime_error("--position-linear above 0.3: a step could get a negative reward");
     const std::map<std::string, fixed_wing::StartMode> start_modes = {
         {"trimmed", fixed_wing::TRIMMED}, {"neutral", fixed_wing::NEUTRAL}, {"random", fixed_wing::RANDOM}};
     if(!start_modes.count(start_name)) throw std::runtime_error("unknown start " + start_name);
@@ -418,7 +426,8 @@ int run(int argc, char** argv){
         << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
         << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
         << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")
-        << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\"\n}\n";
+        << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"position_scale\": " << position_scale
+        << ",\n  \"position_linear_weight\": " << position_linear << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -430,6 +439,10 @@ int run(int argc, char** argv){
     curriculum.target.alpha_margin_weight = alpha_weight;
     curriculum.initial.huber_delta = huber_delta;
     curriculum.target.huber_delta = huber_delta;
+    for(auto* c: {&curriculum.initial, &curriculum.target}){  // tracking task: constant over the curriculum
+        c->position_scale = position_scale;
+        c->position_linear_weight = position_linear;
+    }
     if(!trim_reward){
         curriculum.initial.trim_weight = 0;
         curriculum.target.trim_weight = 0;
