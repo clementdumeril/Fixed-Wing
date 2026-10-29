@@ -121,6 +121,10 @@ namespace fixed_wing{
         // a cost linear in the distance to the reference, outside the saturation: weight x min(distance / 100 m, 1).
         // At most 0.3: survival 1 - cap 0.5 - far 0.2 - 0.3 keeps the reward of a step >= 0, so ending a flight never pays
         T position_linear_weight = 0;
+        // > 0: the position leaves the saturating cost (whose quadratic term, at the stage 5 weight, is flat beyond
+        // about 12 m) for weight x (1 - exp(-distance / position_exp_scale)), steep near the reference and never flat
+        T position_exp_weight = 0;
+        T position_exp_scale = 30;  // m
         T velocity_scale = 4;  // m/s
         T position_weight = 0.6;
         T velocity_weight = 0.3;

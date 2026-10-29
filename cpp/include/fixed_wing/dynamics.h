@@ -461,10 +461,15 @@ namespace fixed_wing{
     template <typename T>
     T reward_from_tracking_errors(T position_error, T velocity_error, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
         // tracking task: distances to the reference position [m] and velocity [m/s]
-        T tracking = c.position_weight * tracking_cost(position_error / c.position_scale, c)
-                   + c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);
-        T far = std::fmin(position_error / c.far_position_scale, T(1)) + std::fmin(velocity_error / c.far_velocity_scale, T(1));
-        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c)
+        bool exponential = c.position_exp_weight > 0;  // position outside the saturating cost
+        T tracking = c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);
+        T far = std::fmin(velocity_error / c.far_velocity_scale, T(1));
+        if(!exponential){
+            tracking += c.position_weight * tracking_cost(position_error / c.position_scale, c);
+            far += std::fmin(position_error / c.far_position_scale, T(1));
+        }
+        T position = exponential ? c.position_exp_weight * (1 - std::exp(-position_error / c.position_exp_scale)) : T(0);
+        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c) - position
              - c.position_linear_weight * std::fmin(position_error / c.far_position_scale, T(1));
     }
 
