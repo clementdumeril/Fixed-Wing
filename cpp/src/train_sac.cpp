@@ -3,7 +3,7 @@
 // 100 test scenarios of the Python environment and on 100 random starts.
 //
 // train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward]
-//           [--huber D] [--position-scale S] [--position-linear W] [--position-exp W]
+//           [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K]
 //   scenarios.txt: tools/export_scenarios.py; out_dir gets config.json, progress.csv, evaluation.json (Python
 //   scenarios) and evaluation_random.json (random starts, the same for every run), flights.csv and flights_random.csv
 //   (the first 10 test flights of each, step by step) and actor.h (the trained actor as C++ code)
@@ -13,8 +13,8 @@
 //   --huber: Huber instead of square on the scaled tracking errors (RewardConfig::huber_delta)
 //   --position-scale, --position-linear: tracking task, scale of the position cost and weight of the linear distance
 //   cost (RewardConfig::position_scale, position_linear_weight)
-//   --position-exp: tracking task, weight of the position cost 1 - exp(-distance / 30 m), out of the saturating cost
-//   (RewardConfig::position_exp_weight)
+//   --velocity-guidance: tracking task, the velocity cost is on the error to the reference velocity plus K x the
+//   position error toward the reference, at most 5 m/s (RewardConfig::velocity_guidance_gain)
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -398,7 +398,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--position-exp W]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -413,23 +413,22 @@ int run(int argc, char** argv){
     T_ENV huber_delta = 0;
     fixed_wing::RewardConfig<T_ENV> defaults;
     T_ENV position_scale = defaults.position_scale, position_linear = defaults.position_linear_weight;
-    T_ENV position_exp = defaults.position_exp_weight;
+    T_ENV guidance = defaults.velocity_guidance_gain;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
         if(option == "--alpha-weight" && i + 1 < argc) alpha_weight = std::stod(argv[++i]);
         else if(option == "--position-scale" && i + 1 < argc) position_scale = std::stod(argv[++i]);
         else if(option == "--position-linear" && i + 1 < argc) position_linear = std::stod(argv[++i]);
-        else if(option == "--position-exp" && i + 1 < argc) position_exp = std::stod(argv[++i]);
+        else if(option == "--velocity-guidance" && i + 1 < argc) guidance = std::stod(argv[++i]);
         else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
         else if(option == "--no-trim-reward") trim_reward = false;
         else throw std::runtime_error("unknown option " + option);
     }
     // the lowest reward of a flying step: survival - capped cost - far terms - position terms; it must stay >= 0,
-    // or ending the flight would pay (the position leaves the far terms when --position-exp is set)
-    T_ENV lowest = defaults.survival - defaults.cost_cap * defaults.survival - defaults.far_weight * (position_exp > 0 ? 1 : 2)
-                 - position_exp - position_linear;
-    if(lowest < -1e-9) throw std::runtime_error("--position-exp and --position-linear too large: a step could get a negative reward");
+    // or ending the flight would pay
+    T_ENV lowest = defaults.survival - defaults.cost_cap * defaults.survival - defaults.far_weight * 2 - position_linear;
+    if(lowest < -1e-9) throw std::runtime_error("--position-linear too large: a step could get a negative reward");
     const std::map<std::string, fixed_wing::StartMode> start_modes = {
         {"trimmed", fixed_wing::TRIMMED}, {"neutral", fixed_wing::NEUTRAL}, {"random", fixed_wing::RANDOM}};
     if(!start_modes.count(start_name)) throw std::runtime_error("unknown start " + start_name);
@@ -439,7 +438,7 @@ int run(int argc, char** argv){
         << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
         << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")
         << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"position_scale\": " << position_scale
-        << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"position_exp_weight\": " << position_exp << "\n}\n";
+        << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -454,7 +453,7 @@ int run(int argc, char** argv){
     for(auto* c: {&curriculum.initial, &curriculum.target}){  // tracking task: constant over the curriculum
         c->position_scale = position_scale;
         c->position_linear_weight = position_linear;
-        c->position_exp_weight = position_exp;
+        c->velocity_guidance_gain = guidance;
     }
     if(!trim_reward){
         curriculum.initial.trim_weight = 0;

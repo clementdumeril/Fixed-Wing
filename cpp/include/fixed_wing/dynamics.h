@@ -459,17 +459,19 @@ namespace fixed_wing{
     }
 
     template <typename T>
-    T reward_from_tracking_errors(T position_error, T velocity_error, T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
-        // tracking task: distances to the reference position [m] and velocity [m/s]
-        bool exponential = c.position_exp_weight > 0;  // position outside the saturating cost
-        T tracking = c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);
-        T far = std::fmin(velocity_error / c.far_velocity_scale, T(1));
-        if(!exponential){
-            tracking += c.position_weight * tracking_cost(position_error / c.position_scale, c);
-            far += std::fmin(position_error / c.far_position_scale, T(1));
-        }
-        T position = exponential ? c.position_exp_weight * (1 - std::exp(-position_error / c.position_exp_scale)) : T(0);
-        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c) - position
+    T reward_from_tracking_errors(const T e_position[3], const T e_velocity[3], T beta, T alpha, T action_change_squared, T trim_deviation_squared, const RewardConfig<T>& c){
+        // tracking task: errors to the reference position [m] and velocity [m/s], in any frame (only norms are used)
+        T position_error = norm3(e_position);
+        // error to the commanded velocity: reference velocity - gain x position error, the correction clipped
+        T correction = c.velocity_guidance_gain * position_error;
+        T scale = correction > c.velocity_guidance_max ? c.velocity_guidance_max / correction : T(1);
+        T e_guided[3];
+        for(int i = 0; i < 3; i++) e_guided[i] = e_velocity[i] + scale * c.velocity_guidance_gain * e_position[i];
+        T velocity_error = norm3(e_guided);
+        T tracking = c.position_weight * tracking_cost(position_error / c.position_scale, c)
+                   + c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);
+        T far = std::fmin(position_error / c.far_position_scale, T(1)) + std::fmin(velocity_error / c.far_velocity_scale, T(1));
+        return reward_from_cost(tracking, far, beta, alpha, action_change_squared, trim_deviation_squared, c)
              - c.position_linear_weight * std::fmin(position_error / c.far_position_scale, T(1));
     }
 
@@ -505,7 +507,7 @@ namespace fixed_wing{
         if constexpr(FW_TRACKING){
             T e_position[3], e_velocity[3];
             tracking_errors(next, e_position, e_velocity);
-            return reward_from_tracking_errors(norm3(e_position), norm3(e_velocity), air.beta, air.alpha, change, deviation, config.reward);
+            return reward_from_tracking_errors(e_position, e_velocity, air.beta, air.alpha, change, deviation, config.reward);
         }
         else{
             Measurements<T> m = measurements(p, next.body);
@@ -532,10 +534,10 @@ namespace fixed_wing{
             deviation += (a - trim_action) * (a - trim_action);
         }
         if constexpr(FW_TRACKING){
-            // the norms do not depend on the frame; the position is clipped at 200 m in the observation
+            // body frame: the reward does not depend on the frame; the position is clipped at 200 m in the observation
             T position[3] = {next_observation[0] * 20, next_observation[1] * 20, next_observation[2] * 20};
             T velocity[3] = {next_observation[3] * 5, next_observation[4] * 5, next_observation[5] * 5};
-            return reward_from_tracking_errors(norm3(position), norm3(velocity), beta, alpha, change, deviation, c);
+            return reward_from_tracking_errors(position, velocity, beta, alpha, change, deviation, c);
         }
         else{
             T e_airspeed = next_observation[0] * 5;

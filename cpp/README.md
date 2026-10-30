@@ -51,9 +51,10 @@ descending at up to 1 m/s; the airplane has to reach it and follow it. The polic
 in the body frame (62 inputs), and the reward penalizes the distances to the reference position and velocity. Its test
 A is 100 normal flights (neutral start) instead of the Python scenarios, and its evaluations add `position_rmse` [m]
 and `velocity_rmse` [m/s]. `--position-scale S` sets the scale of the position cost (default 50 m) and
-`--position-linear W` adds a cost linear in the distance, outside the saturation of the reward; `--position-exp W`
-takes the position out of the saturating cost for W (1 − exp(−distance / 30 m)). The program refuses weights that
-could make the reward of a step negative. This task exists in C++ only.
+`--position-linear W` adds a cost linear in the distance, outside the saturation of the reward (the program refuses
+weights that could make the reward of a step negative); `--velocity-guidance K` puts the velocity cost on the error to
+the reference velocity plus K times the position error toward the point (at most 5 m/s), so that closing the gap no
+longer costs velocity error. This task exists in C++ only.
 Each run writes `evaluation.json` (the 100 Python test flights) and `evaluation_random.json` (100 random starts, the
 same for every run), the first 10 flights of each step by step (`flights.csv`, `flights_random.csv`) and the trained
 actor as C++ code (`actor.h`).
@@ -78,7 +79,7 @@ sbatch savio/random_start.slurm   # random start, no trim term, 10 seeds, with t
 sbatch savio/tracking.slurm       # position and velocity tracking, 3 reward settings x 3 seeds
 sbatch savio/tracking_gamma.slurm # the same task with a discount factor of 0.995 and 0.998, 3 seeds each
 sbatch --export=ALL,STEPS=3000000 savio/tracking_gamma.slurm   # the same with 3 M steps
-sbatch savio/tracking_exp.slurm   # gamma 0.998, position cost 1 - exp(-distance / 30 m), weights 0.3 and 0.4
+sbatch savio/tracking_guidance.slurm  # gamma 0.995, velocity cost toward the point, gains 0.1 and 0.2 /s
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.

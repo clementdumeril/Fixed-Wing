@@ -121,10 +121,11 @@ namespace fixed_wing{
         // a cost linear in the distance to the reference, outside the saturation: weight x min(distance / 100 m, 1).
         // At most 0.3: survival 1 - cap 0.5 - far 0.2 - 0.3 keeps the reward of a step >= 0, so ending a flight never pays
         T position_linear_weight = 0;
-        // > 0: the position leaves the saturating cost (whose quadratic term, at the stage 5 weight, is flat beyond
-        // about 12 m) for weight x (1 - exp(-distance / position_exp_scale)), steep near the reference and never flat
-        T position_exp_weight = 0;
-        T position_exp_scale = 30;  // m
+        // > 0: the velocity cost is on the error to the reference velocity plus a correction toward the reference
+        // point, gain x position error, at most velocity_guidance_max. With the reference velocity alone, flying at
+        // that velocity some 30 to 50 m behind the point was a stable optimum: closing the gap costs velocity error
+        T velocity_guidance_gain = 0;  // 1/s
+        T velocity_guidance_max = 5;  // m/s
         T velocity_scale = 4;  // m/s
         T position_weight = 0.6;
         T velocity_weight = 0.3;
