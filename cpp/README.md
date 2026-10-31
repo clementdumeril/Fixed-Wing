@@ -80,6 +80,7 @@ sbatch savio/tracking.slurm       # position and velocity tracking, 3 reward set
 sbatch savio/tracking_gamma.slurm # the same task with a discount factor of 0.995 and 0.998, 3 seeds each
 sbatch --export=ALL,STEPS=3000000 savio/tracking_gamma.slurm   # the same with 3 M steps
 sbatch savio/tracking_guidance.slurm  # gamma 0.995, velocity cost toward the point, gains 0.1 and 0.2 /s
+sbatch savio/tracking_seeds.slurm     # the two best settings (gain 0 and 0.1) on 10 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
