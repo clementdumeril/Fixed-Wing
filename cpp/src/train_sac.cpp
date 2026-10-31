@@ -3,7 +3,7 @@
 // 100 test scenarios of the Python environment and on 100 random starts.
 //
 // train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward]
-//           [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K]
+//           [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG]
 //   scenarios.txt: tools/export_scenarios.py; out_dir gets config.json, progress.csv, evaluation.json (Python
 //   scenarios) and evaluation_random.json (random starts, the same for every run), flights.csv and flights_random.csv
 //   (the first 10 test flights of each, step by step) and actor.h (the trained actor as C++ code)
@@ -15,6 +15,9 @@
 //   cost (RewardConfig::position_scale, position_linear_weight)
 //   --velocity-guidance: tracking task, the velocity cost is on the error to the reference velocity plus K x the
 //   position error toward the reference, at most 5 m/s (RewardConfig::velocity_guidance_gain)
+//   --reference-bearing-max: tracking task, the point starts within DEG of the airplane's course (default 180: anywhere
+//   around it; TaskConfig::reference_bearing_max). Tracking runs also write evaluation_ahead.json: test B with the
+//   point within 45 deg ahead
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -253,11 +256,12 @@ std::vector<ENVIRONMENT::State> start_states(const std::vector<Scenario>& scenar
     return states;
 }
 
-std::vector<ENVIRONMENT::State> sampled_starts(DEVICE& device, TI seed, fixed_wing::StartMode start){
+std::vector<ENVIRONMENT::State> sampled_starts(DEVICE& device, TI seed, fixed_wing::StartMode start, T_ENV bearing_max = fixed_wing::PI){
     // test set sampled from the task itself: a fixed seed, so that every run is evaluated on the same flights
     ENVIRONMENT env;
     rlt::init(device, env);
     env.config.start = start;
+    env.config.reference_bearing_max = bearing_max;
     ENVIRONMENT::Parameters p;
     fixed_wing::task_parameters(env.config, p);
     RNG rng;
@@ -398,7 +402,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -414,12 +418,14 @@ int run(int argc, char** argv){
     fixed_wing::RewardConfig<T_ENV> defaults;
     T_ENV position_scale = defaults.position_scale, position_linear = defaults.position_linear_weight;
     T_ENV guidance = defaults.velocity_guidance_gain;
+    T_ENV bearing_max_deg = 180;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
         if(option == "--alpha-weight" && i + 1 < argc) alpha_weight = std::stod(argv[++i]);
         else if(option == "--position-scale" && i + 1 < argc) position_scale = std::stod(argv[++i]);
         else if(option == "--position-linear" && i + 1 < argc) position_linear = std::stod(argv[++i]);
         else if(option == "--velocity-guidance" && i + 1 < argc) guidance = std::stod(argv[++i]);
+        else if(option == "--reference-bearing-max" && i + 1 < argc) bearing_max_deg = std::stod(argv[++i]);
         else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
         else if(option == "--no-trim-reward") trim_reward = false;
@@ -438,7 +444,8 @@ int run(int argc, char** argv){
         << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
         << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")
         << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"position_scale\": " << position_scale
-        << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance << "\n}\n";
+        << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
+        << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -470,7 +477,11 @@ int run(int argc, char** argv){
     auto set_reward = [&](const fixed_wing::RewardConfig<T_ENV>& c){
         for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++) rlt::get(ts.off_policy_runner.envs, 0, i).config.reward = c;
     };
-    for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++) rlt::get(ts.off_policy_runner.envs, 0, i).config.start = start_modes.at(start_name);
+    for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++){
+        auto& config = rlt::get(ts.off_policy_runner.envs, 0, i).config;
+        config.start = start_modes.at(start_name);
+        config.reference_bearing_max = std::min(bearing_max_deg, T_ENV(180)) * fixed_wing::PI / 180;
+    }
     set_reward(curriculum.at_stage(0));
 
     std::ofstream progress(out_dir / "progress.csv");
@@ -509,6 +520,11 @@ int run(int argc, char** argv){
     std::string result_random = evaluate(device, rlt::get_actor(ts), sampled_starts(device, 12345, fixed_wing::RANDOM), ts.rng,
                                          out_dir / "flights_random.csv");
     std::ofstream(out_dir / "evaluation_random.json") << result_random;
+    if constexpr(FW_TRACKING){  // test B with the point within 45 deg ahead, as a trajectory planner would place it
+        std::string result_ahead = evaluate(device, rlt::get_actor(ts), sampled_starts(device, 12345, fixed_wing::RANDOM,
+                                            45 * fixed_wing::PI / 180), ts.rng, out_dir / "flights_ahead.csv");
+        std::ofstream(out_dir / "evaluation_ahead.json") << result_ahead;
+    }
     std::cout << result << "random starts:\n" << result_random << "training seconds: " << seconds << std::endl;
     rlt::free(device, ts);
     return 0;

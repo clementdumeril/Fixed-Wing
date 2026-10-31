@@ -100,7 +100,9 @@ namespace rl_tools{
             // a reference point near the airplane, flying straight at constant velocity; the setpoints follow it
             T heading = fixed_wing::wrap(course + uniform(-c.course_change_max, c.course_change_max));
             T speed = uniform(c.reference_speed_range[0], c.reference_speed_range[1]);
-            T bearing = uniform(T(-fixed_wing::PI), T(fixed_wing::PI));
+            // one draw either way: with the default, the same starts as before the option existed
+            T bearing = c.reference_bearing_max >= T(fixed_wing::PI) ? uniform(T(-fixed_wing::PI), T(fixed_wing::PI))
+                      : fixed_wing::wrap(course + uniform(-c.reference_bearing_max, c.reference_bearing_max));
             T distance = uniform(T(0), c.reference_offset_max);
             T altitude = fixed_wing::clip(body.position[2] + uniform(-c.reference_altitude_offset_max, c.reference_altitude_offset_max),
                                           c.reference_altitude_range[0], c.reference_altitude_range[1]);

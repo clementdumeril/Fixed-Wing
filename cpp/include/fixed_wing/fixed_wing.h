@@ -171,6 +171,9 @@ namespace fixed_wing{
         // tracking task: the reference starts up to 50 m away horizontally and 15 m vertically, flies at 20-28 m/s
         // within 90 deg of the airplane's heading, and climbs or descends at up to 1 m/s inside 40-140 m of altitude
         T reference_offset_max = 50;  // m
+        // direction of the point from the airplane at the start, relative to the airplane's course: 180 deg is anywhere
+        // around it (about half the starts put the point behind, which takes steep turns to reach); 45 deg is ahead
+        T reference_bearing_max = T(3.141592653589793);  // rad
         T reference_altitude_offset_max = 15;  // m
         T reference_speed_range[2] = {20, 28};  // m/s, horizontal
         T reference_climb_max = 1;  // m/s
