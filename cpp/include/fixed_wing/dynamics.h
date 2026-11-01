@@ -399,7 +399,14 @@ namespace fixed_wing{
         for(int i = 0; i < 3; i++) write(k++, m.velocity_body[i] / 25);
         write(k++, m.airspeed / 25);
         if constexpr(N_INTEGRALS > 0){
-            for(int i = 0; i < 3; i++) write(k++, s.error_integral[i] / p.error_integral_limits[i]);
+            if constexpr(FW_TRACKING){
+                T body[3];
+                rotate_inverse(m.R, s.error_integral, body);
+                for(int i = 0; i < 3; i++) write(k++, clip(body[i] / p.position_integral_scale, T(-10), T(10)));
+            }
+            else{
+                for(int i = 0; i < 3; i++) write(k++, s.error_integral[i] / p.error_integral_limits[i]);
+            }
         }
         for(int h = 0; h < ACTION_HISTORY; h++) for(int i = 0; i < N_ACTUATORS; i++) write(k++, s.action_history[h][i]);
     }
@@ -563,6 +570,8 @@ namespace fixed_wing{
         p.latency_steps = config.latency_steps;
         if(p.latency_steps > MAX_LATENCY) throw std::runtime_error("latency_steps > MAX_LATENCY");
         for(int i = 0; i < 3; i++) p.error_integral_limits[i] = config.error_integral_limits[i];
+        p.position_integral_time = config.position_integral_time;
+        p.position_integral_scale = config.position_integral_scale;
     }
 
     template <typename T>
@@ -573,13 +582,20 @@ namespace fixed_wing{
             // the reference moves on; the altitude setpoint follows it (termination on the altitude error)
             for(int i = 0; i < 3; i++) next.reference_position[i] = state.reference_position[i] + state.reference_velocity[i] * p.dt;
             next.setpoint_altitude = next.reference_position[2];
+            // integral of the position error with forgetting: a steady offset builds up, the approach fades out
+            T e_position[3], e_velocity[3];
+            tracking_errors(next, e_position, e_velocity);
+            T keep = std::exp(-p.dt / p.position_integral_time);
+            for(int i = 0; i < 3; i++) next.error_integral[i] = keep * state.error_integral[i] + e_position[i] * p.dt;
         }
-        Measurements<T> m = measurements(p, next.body);
-        T e[3];
-        errors(m, next, e[0], e[1], e[2]);
-        for(int i = 0; i < 3; i++){
-            T limit = p.error_integral_limits[i];
-            next.error_integral[i] = clip(state.error_integral[i] + e[i] * p.dt, -limit, limit);
+        else{
+            Measurements<T> m = measurements(p, next.body);
+            T e[3];
+            errors(m, next, e[0], e[1], e[2]);
+            for(int i = 0; i < 3; i++){
+                T limit = p.error_integral_limits[i];
+                next.error_integral[i] = clip(state.error_integral[i] + e[i] * p.dt, -limit, limit);
+            }
         }
     }
 

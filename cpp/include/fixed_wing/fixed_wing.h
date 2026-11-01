@@ -7,7 +7,8 @@
 
 #include <rl_tools/rl/environments/environments.h>
 
-// 1: the time integrals of the airspeed, altitude and course errors are part of the observation (train_sac_*_integral)
+// 1: the time integrals of the airspeed, altitude and course errors are part of the observation (train_sac_*_integral);
+// tracking task: the time integral of the position error, with forgetting (train_sac_*_tracking_*_integral)
 #ifndef FW_ERROR_INTEGRAL
 #define FW_ERROR_INTEGRAL 0
 #endif
@@ -57,6 +58,8 @@ namespace fixed_wing{
         int latency_steps;  // control periods between a command and its application
         T wind[3];  // world frame, constant over an episode
         T error_integral_limits[3];  // m, m s, rad s (TaskConfig)
+        T position_integral_time;  // s, tracking task (TaskConfig)
+        T position_integral_scale;  // m s
         // randomization factors, kept for the critic: mass, inertia, thrust, actuator time, then the 28 coefficients
         T randomization[4 + N_COEFFICIENTS];
     };
@@ -83,7 +86,8 @@ namespace fixed_wing{
         T reference_velocity[3];  // world frame, constant over an episode
         T trim_action[N_ACTUATORS];  // normalized commands of steady level flight at the setpoint airspeed
         T action_history[ACTION_HISTORY][N_ACTUATORS];  // normalized, oldest first; the last row is the previous action
-        T error_integral[3];  // time integrals of the airspeed, altitude and course errors, clipped (simulate_task)
+        T error_integral[3];  // time integrals of the airspeed, altitude and course errors, clipped (simulate_task);
+                              // tracking: of the position error, world frame [m s]
     };
 
     template <typename T>
@@ -169,6 +173,10 @@ namespace fixed_wing{
         T random_beta_max = T(0.13962634015954636);  // 8 deg
         // clip of the error integrals, also their observation scale: about 20 s of 1 m/s, 5 m and 14 deg
         T error_integral_limits[3] = {20, 100, 5};  // m, m s, rad s
+        // tracking task: the integral of the position error forgets with this time constant, so that the approach
+        // (up to 50 m for a few seconds) leaves it within about 10 s; a steady 20 m offset gives 200 m s, observed as 1
+        T position_integral_time = 10;  // s
+        T position_integral_scale = 200;  // m s
         // tracking task: the reference starts up to 50 m away horizontally and 15 m vertically, flies at 20-28 m/s
         // within 90 deg of the airplane's heading, and climbs or descends at up to 1 m/s inside 40-140 m of altitude
         T reference_offset_max = 50;  // m

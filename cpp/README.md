@@ -55,7 +55,8 @@ and `velocity_rmse` [m/s]. `--position-scale S` sets the scale of the position c
 `--position-linear W` adds a cost linear in the distance, outside the saturation of the reward (the program refuses
 weights that could make the reward of a step negative); `--velocity-guidance K` puts the velocity cost on the error to
 the reference velocity plus K times the position error toward the point (at most 5 m/s), so that closing the gap no
-longer costs velocity error. `--reference-bearing-max DEG` starts the point within DEG of the airplane's course
+longer costs velocity error. `train_sac_c256_b64_tracking_g995_integral` also gives the policy the time integral of
+the position error, with a forgetting time of 10 s so that the approach fades out of it (65 inputs). `--reference-bearing-max DEG` starts the point within DEG of the airplane's course
 (default 180: anywhere around it, so about half the starts put it behind). Tracking runs also write
 `evaluation_ahead.json`: test B with the point within 45° ahead. This task exists in C++ only.
 Each run writes `evaluation.json` (the 100 Python test flights) and `evaluation_random.json` (100 random starts, the
@@ -86,6 +87,7 @@ sbatch savio/tracking_guidance.slurm  # gamma 0.995, velocity cost toward the po
 sbatch savio/tracking_seeds.slurm     # the two best settings (gain 0 and 0.1) on 10 seeds each
 sbatch savio/tracking_ahead.slurm     # gain 0.1 with the point starting within 45 deg ahead, 10 seeds
 sbatch savio/tracking_alpha.slurm     # gain 0.1 with a margin to the stall, weights 0.3 and 1, 10 seeds each
+sbatch savio/tracking_integral.slurm  # gain 0.1, margin weight 1, with the integral of the position error, 10 seeds
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.

@@ -75,6 +75,13 @@ foreach(gamma 995 998)
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
+# tracking with a discount factor of 0.995 and the integral of the position error in the observation (65 values)
+add_executable(train_sac_c256_b64_tracking_g995_integral src/train_sac.cpp)
+target_include_directories(train_sac_c256_b64_tracking_g995_integral PRIVATE include)
+target_link_libraries(train_sac_c256_b64_tracking_g995_integral PRIVATE RLtools::RLtools)
+target_compile_definitions(train_sac_c256_b64_tracking_g995_integral PRIVATE FW_CRITIC_HIDDEN=256 FW_BATCH=64 FW_TRACKING=1 FW_GAMMA=0.995 FW_ERROR_INTEGRAL=1)
+list(APPEND TRAIN_TARGETS train_sac_c256_b64_tracking_g995_integral)
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)
