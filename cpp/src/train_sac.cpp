@@ -432,7 +432,8 @@ int run(int argc, char** argv){
         else throw std::runtime_error("unknown option " + option);
     }
     // the lowest reward of a flying step: survival - capped cost - far terms - position terms; it must stay >= 0,
-    // or ending the flight would pay
+    // or ending the flight would pay. The tracking margin to the stall is left out: it costs only within 4 deg of
+    // the limit, a state the flight leaves (dynamics.h)
     T_ENV lowest = defaults.survival - defaults.cost_cap * defaults.survival - defaults.far_weight * 2 - position_linear;
     if(lowest < -1e-9) throw std::runtime_error("--position-linear too large: a step could get a negative reward");
     const std::map<std::string, fixed_wing::StartMode> start_modes = {

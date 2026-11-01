@@ -107,6 +107,7 @@ namespace fixed_wing{
         T far_course_scale = T(1.5707963267948966);  // 90 deg
         // margin to the stall: a cost once the angle of attack is within 4 deg of the termination limits (-10, 15 deg),
         // so that the policy sees the stall coming instead of only the end of the flight. Off by default (not in Python).
+        // Inside the cap for the setpoint task, outside it for the tracking task (reward_from_tracking_errors)
         T alpha_margin_weight = 0;
         T alpha_soft_min = T(-0.10471975511965977);  // -6 deg
         T alpha_soft_max = T(0.19198621771937624);  // 11 deg

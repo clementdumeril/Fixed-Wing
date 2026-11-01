@@ -41,7 +41,8 @@ Options after the step count:
   pitch ±20°, airspeed 18–32 m/s, angle of attack −4° to 10° and sideslip ±8° (never stalled), random commands.
 - `--no-trim-reward`: no trim term in the reward, so that the policy finds trim on its own.
 - `--huber D`: Huber instead of square on the scaled airspeed, altitude and course errors.
-- `--alpha-weight W`: a cost on the angle of attack within 4° of the stall limits.
+- `--alpha-weight W`: a cost on the angle of attack within 4° of the stall limits (W at the limit). In the tracking
+  task it is outside the saturation of the reward, since far from the point the position cost saturates it.
 
 The `train_sac_c256_b64_integral` target also gives the policy the time integrals of the three errors (63 inputs).
 
@@ -84,6 +85,7 @@ sbatch --export=ALL,STEPS=3000000 savio/tracking_gamma.slurm   # the same with 3
 sbatch savio/tracking_guidance.slurm  # gamma 0.995, velocity cost toward the point, gains 0.1 and 0.2 /s
 sbatch savio/tracking_seeds.slurm     # the two best settings (gain 0 and 0.1) on 10 seeds each
 sbatch savio/tracking_ahead.slurm     # gain 0.1 with the point starting within 45 deg ahead, 10 seeds
+sbatch savio/tracking_alpha.slurm     # gain 0.1 with a margin to the stall, weights 0.3 and 1, 10 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
