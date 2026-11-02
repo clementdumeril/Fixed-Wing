@@ -63,6 +63,8 @@ the position error, with a forgetting time of 10 s so that the approach fades ou
 with the weights of stage S from the start, without curriculum. `--profile` times each part of a training step and
 writes `profile.json`. The `train_sac_*_e<N>` targets fly N airplanes in parallel, with one network update per step of
 all of them.
+The `train_sac_*_i<K>` targets update the networks every K steps only, as the L2F configurations of RLtools: each
+step is about K times cheaper.
 Each run writes `evaluation.json` (the 100 Python test flights) and `evaluation_random.json` (100 random starts, the
 same for every run), the first 10 flights of each step by step (`flights.csv`, `flights_random.csv`) and the trained
 actor as C++ code (`actor.h`).

@@ -102,6 +102,18 @@ foreach(critic 128 64)
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
+# the same with a network update every 4 or 8 steps only: steps 4 or 8 times cheaper, so more of them for the same time
+foreach(critic 128 64)
+    foreach(interval 4 8)
+        set(target train_sac_c${critic}_b64_tracking_g995_i${interval})
+        add_executable(${target} src/train_sac.cpp)
+        target_include_directories(${target} PRIVATE include)
+        target_link_libraries(${target} PRIVATE RLtools::RLtools)
+        target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=${critic} FW_BATCH=64 FW_TRACKING=1 FW_GAMMA=0.995 FW_TRAINING_INTERVAL=${interval})
+        list(APPEND TRAIN_TARGETS ${target})
+    endforeach()
+endforeach()
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)

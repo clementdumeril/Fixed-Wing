@@ -22,7 +22,8 @@
 //   --curriculum-period: airplane steps between two checks of the curriculum gate (default 100000, as L2F)
 //   --profile: time each part of a training step (airplanes, batch, critics, critic targets, actor and entropy
 //   coefficient) and write profile.json
-// steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS)
+// steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
+// train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL)
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -93,6 +94,11 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #ifndef FW_N_ENVIRONMENTS
 #define FW_N_ENVIRONMENTS 1
 #endif
+// loop steps between two network updates (critics, actor and entropy coefficient, critic targets): fewer updates per
+// step of experience, as the L2F configurations of RLtools (src/rl/zoo/l2f: every 5 to 16 steps)
+#ifndef FW_TRAINING_INTERVAL
+#define FW_TRAINING_INTERVAL 1
+#endif
 
 struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
     struct SAC_PARAMETERS: rlt::rl::algorithms::sac::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT::ACTION_DIM>{
@@ -100,6 +106,9 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
         static constexpr TI ACTOR_BATCH_SIZE = FW_BATCH;
         static constexpr TI CRITIC_BATCH_SIZE = FW_BATCH;
         static constexpr T ALPHA = 1.0;  // initial entropy coefficient, as stable-baselines3 "auto"
+        static constexpr TI CRITIC_TRAINING_INTERVAL = FW_TRAINING_INTERVAL;
+        static constexpr TI ACTOR_TRAINING_INTERVAL = FW_TRAINING_INTERVAL;
+        static constexpr TI CRITIC_TARGET_UPDATE_INTERVAL = FW_TRAINING_INTERVAL;
     };
     // loop steps below: each one steps all the airplanes; the counts are in airplane steps, as with one airplane
     static constexpr TI N_ENVIRONMENTS = FW_N_ENVIRONMENTS;
@@ -536,6 +545,7 @@ int run(int argc, char** argv){
         << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"position_scale\": " << position_scale
         << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
+        << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
 
     DEVICE device;
