@@ -18,6 +18,11 @@
 //   --reference-bearing-max: tracking task, the point starts within DEG of the airplane's course (default 180: anywhere
 //   around it; TaskConfig::reference_bearing_max). Tracking runs also write evaluation_ahead.json: test B with the
 //   point within 45 deg ahead
+//   --curriculum-stage: no curriculum, the reward weights of stage S (0 to 5) from the start
+//   --curriculum-period: airplane steps between two checks of the curriculum gate (default 100000, as L2F)
+//   --profile: time each part of a training step (airplanes, batch, critics, critic targets, actor and entropy
+//   coefficient) and write profile.json
+// steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS)
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -55,6 +60,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace rlt = rl_tools;
@@ -82,6 +88,11 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #ifndef FW_GAMMA
 #define FW_GAMMA 0.99
 #endif
+// airplanes flown in parallel: one network update per step of all of them, so N times fewer updates for the same
+// experience. Almost all the training time is in the updates (an airplane step is about 1000 times cheaper)
+#ifndef FW_N_ENVIRONMENTS
+#define FW_N_ENVIRONMENTS 1
+#endif
 
 struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
     struct SAC_PARAMETERS: rlt::rl::algorithms::sac::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT::ACTION_DIM>{
@@ -90,12 +101,13 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
         static constexpr TI CRITIC_BATCH_SIZE = FW_BATCH;
         static constexpr T ALPHA = 1.0;  // initial entropy coefficient, as stable-baselines3 "auto"
     };
-    static constexpr TI N_ENVIRONMENTS = 1;
-    static constexpr TI N_WARMUP_STEPS = 10000;  // uniform random actions, as learning_starts
-    static constexpr TI N_WARMUP_STEPS_CRITIC = 10000;
-    static constexpr TI N_WARMUP_STEPS_ACTOR = 10000;
+    // loop steps below: each one steps all the airplanes; the counts are in airplane steps, as with one airplane
+    static constexpr TI N_ENVIRONMENTS = FW_N_ENVIRONMENTS;
+    static constexpr TI N_WARMUP_STEPS = 10000 / N_ENVIRONMENTS;  // uniform random actions, as learning_starts
+    static constexpr TI N_WARMUP_STEPS_CRITIC = N_WARMUP_STEPS;
+    static constexpr TI N_WARMUP_STEPS_ACTOR = N_WARMUP_STEPS;
     static constexpr TI STEP_LIMIT = STEP_LIMIT_MAX;
-    static constexpr TI REPLAY_BUFFER_CAP = 1000000;
+    static constexpr TI REPLAY_BUFFER_CAP = 1000000 / N_ENVIRONMENTS;  // per airplane: 1 M transitions in all
     static constexpr TI ACTOR_HIDDEN_DIM = 64;
     static constexpr TI ACTOR_NUM_LAYERS = 3;  // two hidden layers
     static constexpr TI CRITIC_HIDDEN_DIM = FW_CRITIC_HIDDEN;
@@ -152,19 +164,22 @@ struct Curriculum{
 template <typename BUFFER>
 TI filled(const BUFFER& rb){ return rb.full ? BUFFER::CAPACITY : rb.position; }
 
-template <typename BUFFER>
-void recompute_rewards(DEVICE& device, BUFFER& rb, const fixed_wing::RewardConfig<T_ENV>& c){
-    // L2F recomputes the stored rewards after each curriculum change (p. 6)
+template <typename RUNNER>
+void recompute_rewards(DEVICE& device, RUNNER& runner, const fixed_wing::RewardConfig<T_ENV>& c){
+    // L2F recomputes the stored rewards after each curriculum change (p. 6); one replay buffer per airplane
     constexpr TI N = ENVIRONMENT::ObservationPrivileged::DIM;
     T_ENV o[N], o2[N], a[ENVIRONMENT::ACTION_DIM];
-    for(TI i = 0; i < filled(rb); i++){
-        for(TI j = 0; j < N; j++){
-            o[j] = rlt::get(rb.observations_privileged, i, j);
-            o2[j] = rlt::get(rb.next_observations_privileged, i, j);
+    for(TI e = 0; e < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; e++){
+        auto& rb = rlt::get(runner.replay_buffers, 0, e);
+        for(TI i = 0; i < filled(rb); i++){
+            for(TI j = 0; j < N; j++){
+                o[j] = rlt::get(rb.observations_privileged, i, j);
+                o2[j] = rlt::get(rb.next_observations_privileged, i, j);
+            }
+            for(TI j = 0; j < ENVIRONMENT::ACTION_DIM; j++) a[j] = rlt::get(rb.actions, i, j);
+            bool terminated = rlt::get(rb.terminated, i, 0) > T(0.5);
+            rlt::set(rb.rewards, i, 0, T(fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c)));
         }
-        for(TI j = 0; j < ENVIRONMENT::ACTION_DIM; j++) a[j] = rlt::get(rb.actions, i, j);
-        bool terminated = rlt::get(rb.terminated, i, 0) > T(0.5);
-        rlt::set(rb.rewards, i, 0, T(fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c)));
     }
 }
 
@@ -186,28 +201,93 @@ double task_error(const BUFFER& rb, TI i){
     }
 }
 
+// ----- profiling: the RLtools SAC step (sac/loop/core/operations_generic.h) with a timer around each part -------------
+struct Profile{
+    static constexpr int N = 5;
+    static constexpr const char* names[N] = {"airplanes", "batch", "critics", "critic_targets", "actor"};
+    double seconds[N] = {};
+    double calls[N] = {};  // steps on which the part ran: the updates start after the warmup
+};
+
+template <typename CLOCK_TIME>
+void lap(Profile& p, int part, bool ran, CLOCK_TIME& last){
+    auto now = std::chrono::steady_clock::now();
+    p.seconds[part] += std::chrono::duration<double>(now - last).count();
+    p.calls[part] += ran;
+    last = now;
+}
+
+void profiled_step(DEVICE& device, LOOP_STATE& ts, Profile& p){
+    using CORE = LOOP_CORE_PARAMETERS;
+    using SAC = CORE::SAC_PARAMETERS;
+    static_assert(CORE::SHARED_BATCH, "profiled_step follows the shared-batch path of the RLtools step");
+    auto last = std::chrono::steady_clock::now();
+    if(ts.step >= CORE::N_WARMUP_STEPS){
+        rlt::step<1>(device, ts.off_policy_runner, rlt::get_actor(ts), ts.actor_buffers_eval, ts.rng);
+    }
+    else{
+        typename LOOP_CONFIG::EXPLORATION_POLICY exploration_policy;
+        typename LOOP_CONFIG::EXPLORATION_POLICY::template Buffer<> exploration_policy_buffer;
+        rlt::step<0>(device, ts.off_policy_runner, exploration_policy, exploration_policy_buffer, ts.rng);
+    }
+    lap(p, 0, true, last);
+    bool train_critic = ts.step >= CORE::N_WARMUP_STEPS_CRITIC && ts.step % SAC::CRITIC_TRAINING_INTERVAL == 0;
+    bool update_targets = ts.step >= CORE::N_WARMUP_STEPS_CRITIC && ts.step % SAC::CRITIC_TARGET_UPDATE_INTERVAL == 0;
+    bool train_actor = ts.step >= CORE::N_WARMUP_STEPS_ACTOR && ts.step % SAC::ACTOR_TRAINING_INTERVAL == 0;
+    if(train_critic || train_actor){
+        rlt::gather_batch(device, ts.off_policy_runner, ts.critic_batch, ts.rng);
+        rlt::randn(device, ts.action_noise_critic, ts.rng);
+    }
+    lap(p, 1, train_critic || train_actor, last);
+    if(train_critic){
+        for(int i = 0; i < 2; i++){
+            rlt::train_critic(device, ts.actor_critic, ts.actor_critic.critics[i], ts.critic_batch, ts.actor_critic.critic_optimizers[i],
+                              ts.actor_target_buffers[i], ts.critic_buffers[i], ts.critic_target_buffers[i],
+                              ts.critic_training_buffers[i], ts.action_noise_critic, ts.rng);
+        }
+    }
+    lap(p, 2, train_critic, last);
+    if(update_targets) rlt::update_critic_targets(device, ts.actor_critic);
+    lap(p, 3, update_targets, last);
+    if(train_actor){
+        rlt::randn(device, ts.action_noise_actor, ts.rng);
+        rlt::train_actor(device, ts.actor_critic, ts.critic_batch, ts.actor_critic.actor_optimizer, ts.actor_buffers[0],
+                         ts.critic_buffers[0], ts.actor_training_buffers, ts.action_noise_actor, ts.rng);
+    }
+    lap(p, 4, train_actor, last);
+    ts.step++;
+}
+
 struct Window{
     // statistics of the last n transitions of the replay buffer
     double task_error = 0, episode_length = 0, episode_return = 0;
 };
 
-template <typename BUFFER>
-Window window(const BUFFER& rb, TI n){
-    // task error over the last n transitions; length and return of the episodes that ended inside them
+template <typename RUNNER>
+Window window(const RUNNER& runner, TI n){
+    // task error over the last n transitions (n / N of each airplane's buffer); length and return of the episodes
+    // that ended inside them
     Window w;
-    TI available = std::min(n, filled(rb));
-    double error = 0, episode_steps = 0, episode_rewards = 0, lengths = 0, returns = 0, episodes = 0;
-    bool started = false;  // the first episode end seen opens the first complete episode
-    for(TI k = available; k-- > 0;){  // oldest first
-        TI i = (rb.position + BUFFER::CAPACITY - 1 - k) % BUFFER::CAPACITY;
-        error += task_error(rb, i);
-        episode_steps += 1;
-        episode_rewards += rlt::get(rb.rewards, i, 0);
-        if(rlt::get(rb.truncated, i, 0) > T(0.5)){
-            if(started){ lengths += episode_steps; returns += episode_rewards; episodes += 1; }
-            started = true;
-            episode_steps = 0;
-            episode_rewards = 0;
+    double error = 0, lengths = 0, returns = 0, episodes = 0;
+    TI available = 0;
+    for(TI e = 0; e < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; e++){
+        const auto& rb = rlt::get(runner.replay_buffers, 0, e);
+        using BUFFER = std::decay_t<decltype(rb)>;
+        TI count = std::min(n / LOOP_CORE_PARAMETERS::N_ENVIRONMENTS, filled(rb));
+        available += count;
+        double episode_steps = 0, episode_rewards = 0;
+        bool started = false;  // the first episode end seen opens the first complete episode
+        for(TI k = count; k-- > 0;){  // oldest first
+            TI i = (rb.position + BUFFER::CAPACITY - 1 - k) % BUFFER::CAPACITY;
+            error += task_error(rb, i);
+            episode_steps += 1;
+            episode_rewards += rlt::get(rb.rewards, i, 0);
+            if(rlt::get(rb.truncated, i, 0) > T(0.5)){
+                if(started){ lengths += episode_steps; returns += episode_rewards; episodes += 1; }
+                started = true;
+                episode_steps = 0;
+                episode_rewards = 0;
+            }
         }
     }
     if(available > 0) w.task_error = error / available;
@@ -402,7 +482,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -419,6 +499,9 @@ int run(int argc, char** argv){
     T_ENV position_scale = defaults.position_scale, position_linear = defaults.position_linear_weight;
     T_ENV guidance = defaults.velocity_guidance_gain;
     T_ENV bearing_max_deg = 180;
+    int fixed_stage = -1;  // >= 0: no curriculum, the reward weights of that stage from the start
+    TI curriculum_period = Curriculum{}.period;
+    bool profile = false;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
         if(option == "--alpha-weight" && i + 1 < argc) alpha_weight = std::stod(argv[++i]);
@@ -428,7 +511,10 @@ int run(int argc, char** argv){
         else if(option == "--reference-bearing-max" && i + 1 < argc) bearing_max_deg = std::stod(argv[++i]);
         else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
+        else if(option == "--curriculum-stage" && i + 1 < argc) fixed_stage = std::stoi(argv[++i]);
+        else if(option == "--curriculum-period" && i + 1 < argc) curriculum_period = std::stoul(argv[++i]);
         else if(option == "--no-trim-reward") trim_reward = false;
+        else if(option == "--profile") profile = true;
         else throw std::runtime_error("unknown option " + option);
     }
     // the lowest reward of a flying step: survival - capped cost - far terms - position terms; it must stay >= 0,
@@ -439,6 +525,9 @@ int run(int argc, char** argv){
     const std::map<std::string, fixed_wing::StartMode> start_modes = {
         {"trimmed", fixed_wing::TRIMMED}, {"neutral", fixed_wing::NEUTRAL}, {"random", fixed_wing::RANDOM}};
     if(!start_modes.count(start_name)) throw std::runtime_error("unknown start " + start_name);
+    constexpr TI N_ENVIRONMENTS = LOOP_CORE_PARAMETERS::N_ENVIRONMENTS;
+    if(steps % N_ENVIRONMENTS != 0) throw std::runtime_error("steps must be a multiple of the number of airplanes");
+    if(curriculum_period == 0 || curriculum_period % 10000 != 0) throw std::runtime_error("--curriculum-period must be a positive multiple of 10000");
     std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"steps\": " << steps
         << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH << ",\n  \"gamma\": " << FW_GAMMA
         << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
@@ -446,7 +535,8 @@ int run(int argc, char** argv){
         << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")
         << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"position_scale\": " << position_scale
         << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
-        << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << "\n}\n";
+        << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
+        << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -454,6 +544,7 @@ int run(int argc, char** argv){
     rlt::malloc(device, ts);
     rlt::init(device, ts, seed);
     Curriculum curriculum;
+    curriculum.period = curriculum_period;
     curriculum.initial.alpha_margin_weight = alpha_weight;  // constant: not part of the curriculum
     curriculum.target.alpha_margin_weight = alpha_weight;
     curriculum.initial.huber_delta = huber_delta;
@@ -474,7 +565,8 @@ int run(int argc, char** argv){
             if(!std::isfinite(w)) throw std::runtime_error("reward weight not finite at curriculum stage " + std::to_string(s));
         }
     }
-    int stage = 0;
+    if(fixed_stage > curriculum.n_stages) throw std::runtime_error("--curriculum-stage above the last stage");
+    int stage = std::max(fixed_stage, 0);
     auto set_reward = [&](const fixed_wing::RewardConfig<T_ENV>& c){
         for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++) rlt::get(ts.off_policy_runner.envs, 0, i).config.reward = c;
     };
@@ -483,18 +575,21 @@ int run(int argc, char** argv){
         config.start = start_modes.at(start_name);
         config.reference_bearing_max = std::min(bearing_max_deg, T_ENV(180)) * fixed_wing::PI / 180;
     }
-    set_reward(curriculum.at_stage(0));
+    set_reward(curriculum.at_stage(stage));
 
     std::ofstream progress(out_dir / "progress.csv");
     progress << "time/total_timesteps,rollout/ep_len_mean,rollout/ep_rew_mean,"
              << (FW_TRACKING ? "train/position_error_m" : "train/course_error_deg") << ",curriculum/stage,time/time_elapsed\n";
     auto start = std::chrono::steady_clock::now();
-    auto& rb = rlt::get(ts.off_policy_runner.replay_buffers, 0, 0);
+    auto& runner = ts.off_policy_runner;
     TI next_check = curriculum.period;
-    for(TI step = 1; step <= steps; step++){
-        rlt::step(device, ts);
+    Profile timing;
+    // step counts airplane steps: one loop step flies all the airplanes
+    for(TI step = N_ENVIRONMENTS; step <= steps; step += N_ENVIRONMENTS){
+        if(profile) profiled_step(device, ts, timing);
+        else rlt::step(device, ts);
         if(step % 10000 == 0){
-            Window w = window(rb, 50000);
+            Window w = window(runner, 50000);
             double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             progress << step << "," << w.episode_length << "," << w.episode_return << "," << w.task_error * TASK_ERROR_TO_UNIT
                      << "," << stage << "," << elapsed << std::endl;
@@ -504,15 +599,30 @@ int run(int argc, char** argv){
         }
         if(step >= next_check){
             // a stage is taken only if the setpoint was tracked over the last period
-            if(window(rb, curriculum.period).task_error < curriculum.advance_error && stage < curriculum.n_stages){
+            if(fixed_stage < 0 && window(runner, curriculum.period).task_error < curriculum.advance_error && stage < curriculum.n_stages){
                 stage++;
                 set_reward(curriculum.at_stage(stage));
-                recompute_rewards(device, rb, curriculum.at_stage(stage));
+                recompute_rewards(device, runner, curriculum.at_stage(stage));
             }
             next_check += curriculum.period;
         }
     }
     double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if(profile){
+        // microseconds per call of each part (an update part is called once per loop step after the warmup), and the
+        // whole loop per loop step, logging and curriculum included
+        double loop_steps = double(steps / N_ENVIRONMENTS);
+        std::ofstream json(out_dir / "profile.json");
+        json << "{\n  \"loop_steps\": " << loop_steps << ",\n  \"total_us_per_step\": " << seconds / loop_steps * 1e6;
+        std::cout << "microseconds per call:";
+        for(int i = 0; i < Profile::N; i++){
+            double us = timing.calls[i] > 0 ? timing.seconds[i] / timing.calls[i] * 1e6 : 0;
+            json << ",\n  \"" << Profile::names[i] << "_us\": " << us << ",\n  \"" << Profile::names[i] << "_calls\": " << timing.calls[i];
+            std::cout << "  " << Profile::names[i] << " " << us;
+        }
+        json << "\n}\n";
+        std::cout << "  (whole loop " << seconds / loop_steps * 1e6 << " per step)" << std::endl;
+    }
     save_actor(device, rlt::get_actor(ts), out_dir / "actor.h");
     // test A: the Python scenarios, or for tracking normal flights (neutral start); test B: random starts
     std::vector<ENVIRONMENT::State> test_a = FW_TRACKING ? sampled_starts(device, 12345, fixed_wing::NEUTRAL) : start_states(scenarios);

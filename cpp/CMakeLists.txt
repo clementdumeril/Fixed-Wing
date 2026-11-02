@@ -82,6 +82,26 @@ target_link_libraries(train_sac_c256_b64_tracking_g995_integral PRIVATE RLtools:
 target_compile_definitions(train_sac_c256_b64_tracking_g995_integral PRIVATE FW_CRITIC_HIDDEN=256 FW_BATCH=64 FW_TRACKING=1 FW_GAMMA=0.995 FW_ERROR_INTEGRAL=1)
 list(APPEND TRAIN_TARGETS train_sac_c256_b64_tracking_g995_integral)
 
+# the same as tracking_g995 with 4, 8 or 16 airplanes in parallel: one network update per step of all of them
+foreach(n 4 8 16)
+    set(target train_sac_c256_b64_tracking_g995_e${n})
+    add_executable(${target} src/train_sac.cpp)
+    target_include_directories(${target} PRIVATE include)
+    target_link_libraries(${target} PRIVATE RLtools::RLtools)
+    target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=256 FW_BATCH=64 FW_TRACKING=1 FW_GAMMA=0.995 FW_N_ENVIRONMENTS=${n})
+    list(APPEND TRAIN_TARGETS ${target})
+endforeach()
+
+# the same as tracking_g995 with a smaller critic: the 256 x 256 layer is most of the cost of an update
+foreach(critic 128 64)
+    set(target train_sac_c${critic}_b64_tracking_g995)
+    add_executable(${target} src/train_sac.cpp)
+    target_include_directories(${target} PRIVATE include)
+    target_link_libraries(${target} PRIVATE RLtools::RLtools)
+    target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=${critic} FW_BATCH=64 FW_TRACKING=1 FW_GAMMA=0.995)
+    list(APPEND TRAIN_TARGETS ${target})
+endforeach()
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)
