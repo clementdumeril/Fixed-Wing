@@ -122,7 +122,10 @@ bash deploy/ros2/setup_wsl.sh ~/PX4-Autopilot <RLtools include directory>  # DDS
 bash deploy/ros2/fly_sitl.sh                       # PX4 + Gazebo headless, PX4 takes off, the policy flies above 40 m
 ```
 
-`fly_sitl.sh` writes the flight (state, point and commands at each step) to `~/fw_flights/<date>/flight.csv`. The
+`fly_sitl.sh` writes the flight (state, point and commands at each step) to `~/fw_flights/<date>/flight.csv`. `compare_sitl <flight.csv>`
+flies the same policy in this simulator from the same state and point, and predicts each logged step with this
+simulator's model from Gazebo's state and command: the mean and RMS residuals show which part of the model disagrees
+(`residuals.csv`). The
 policy in `policy_weights.h` is seed 3 of the 400k-step critic-128 runs on this airplane: its first SITL flight took
 over at 44 m/s during PX4's climb, settled at 15 m/s and followed the point at 15 m RMSE over the last 30 s, about 8 m
 below it.

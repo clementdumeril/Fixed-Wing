@@ -124,6 +124,13 @@ foreach(critic 256 128)
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
+# a flight of the deployed policy in Gazebo (deploy/ros2/fly_sitl.sh) against this simulator
+add_executable(compare_sitl src/compare_sitl.cpp)
+target_include_directories(compare_sitl PRIVATE include deploy/ros2/fw_policy/policy)
+target_link_libraries(compare_sitl PRIVATE RLtools::RLtools)
+target_compile_definitions(compare_sitl PRIVATE FW_TRACKING=1 FW_AIRPLANE=1)
+list(APPEND TRAIN_TARGETS compare_sitl)
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)
