@@ -104,8 +104,67 @@ namespace fixed_wing{
         };
         for(int i = 0; i < N_COEFFICIENTS; i++) p.aerodynamics[i] = c[i];
         p.thrust_max = 40;
+        p.throttle_time_constant_down = 0;
         T tau[N_ACTUATORS] = {T(0.05), T(0.05), T(0.05), T(0.2)};
         T surface = T(30 * PI / 180);
+        for(int i = 0; i < N_ACTUATORS; i++){
+            p.actuator_time_constants[i] = tau[i];
+            p.actuator_limits[i][0] = i == THROTTLE ? T(0) : -surface;
+            p.actuator_limits[i][1] = i == THROTTLE ? T(1) : surface;
+        }
+        p.dt = T(0.01);
+        p.n_substeps = 1;
+        p.latency_steps = 0;
+        for(int i = 0; i < 3; i++) p.wind[i] = 0;
+        for(int i = 0; i < 4 + N_COEFFICIENTS; i++) p.randomization[i] = 1;
+    }
+
+    // PX4 advanced_plane (PX4-gazebo-models, models/advanced_plane/model.sdf), as Gazebo simulates it: the gz-sim
+    // AdvancedLiftDrag system with the coefficients of the model, its MulticopterMotorModel puller propeller, and PX4's
+    // SITL output mapping (SIM_GZ_EC_MIN1 10, SIM_GZ_EC_MAX1 1600 rad/s; servos +-1 -> +-45 deg). Servos 0 and 1 are the
+    // left and right elevons, moved in opposition as ailerons; servo 2 the elevator, servo 3 the rudder
+    namespace advanced{
+        constexpr double CL0 = 0.15188, CLa = 5.015, CD0 = 0.029, AR = 6.5, eff = 0.97;
+        constexpr double Cem0 = 0.075, Cema = -0.463966, CYb = -0.258244, Cellb = -0.039250, Cenb = 0.100826;
+        constexpr double CDp = 0.0, CYp = 0.065861, CLp = 0.0, Cellp = -0.487407, Cemp = 0.0, Cenp = -0.040416;
+        constexpr double CDq = 0.055166, CYq = 0.0, CLq = 7.971792, Cellq = 0.0, Cemq = -12.140140, Cenq = 0.0;
+        constexpr double CDr = 0.0, CYr = 0.230299, CLr = 0.0, Cellr = 0.078165, Cemr = 0.0, Cenr = -0.089947;
+        constexpr double alpha_stall = 0.3391428111, Cema_stall = 0.0;
+        constexpr double M = 15, CD_fp_k1 = -0.224, CD_fp_k2 = -0.115;  // AdvancedLiftDrag defaults
+        constexpr double cp = -0.12;  // m, center of pressure on body x
+        constexpr double area = 0.34, mac = 0.22, density = 1.2041;
+        // per degree of joint angle, times the joint's direction: servo_0, servo_1, servo_2, servo_3
+        constexpr double CD_ctrl[4] = {-0.000059, -0.000059, -0.000274, 0.0};
+        constexpr double CY_ctrl[4] = {0.000171, -0.000171, 0.0, -0.003913};
+        constexpr double CL_ctrl[4] = {-0.011940, -0.011940, -0.010696, 0.0};
+        constexpr double Cell_ctrl[4] = {-0.003331, 0.003331, 0.0, -0.000257};
+        constexpr double Cem_ctrl[4] = {0.001498, 0.001498, 0.025798, 0.0};
+        constexpr double Cen_ctrl[4] = {-0.000057, 0.000057, 0.0, 0.001613};
+        // propeller 0.3 m ahead of the center of mass, thrust along body x
+        constexpr double rotor_x = 0.3, rotor_speed_min = 10, rotor_speed_max = 1600, motor_constant = 8.54858e-06;
+        constexpr double moment_constant = 0.01, rotor_drag = 8.06428e-05, rolling_moment = 1e-06;
+    }
+
+    template <typename T>
+    void advanced_plane(Parameters<T>& p){
+        // base link 1 kg + propeller 5 g at 0.3 m (parallel axis); Gazebo's default world: g = 9.8
+        p.mass = T(1.005);
+        p.gravity[0] = 0; p.gravity[1] = 0; p.gravity[2] = T(-9.8);
+        T rotor = T(0.005 * advanced::rotor_x * advanced::rotor_x);
+        T J[3][3] = {{T(0.197563 + 9.75e-07), 0, 0}, {0, T(0.1458929 + 0.000166704) + rotor, 0}, {0, 0, T(0.1477 + 0.000167604) + rotor}};
+        for(int i = 0; i < 3; i++) for(int j = 0; j < 3; j++) p.J[i][j] = J[i][j];
+        invert3(p.J, p.J_inv);
+        p.air_density = T(advanced::density);
+        p.wing_area = T(advanced::area);
+        p.wing_span = std::sqrt(T(advanced::area * advanced::AR));
+        p.mean_chord = T(advanced::mac);
+        for(int i = 0; i < N_COEFFICIENTS; i++) p.aerodynamics[i] = 0;  // the coefficients are in advanced::
+        p.thrust_max = T(advanced::motor_constant * advanced::rotor_speed_max * advanced::rotor_speed_max);  // 21.9 N
+        // servos: Gazebo's joint position controller (gain 10) against the joint damping (1): first order, 0.1 s.
+        // Rotor speed: 12.5 ms up, 25 ms down (timeConstantUp, timeConstantDown)
+        T tau[N_ACTUATORS] = {T(0.1), T(0.1), T(0.1), T(0.0125)};
+        p.throttle_time_constant_down = T(0.025);
+        T surface = T(45 * PI / 180);
         for(int i = 0; i < N_ACTUATORS; i++){
             p.actuator_time_constants[i] = tau[i];
             p.actuator_limits[i][0] = i == THROTTLE ? T(0) : -surface;
@@ -146,8 +205,83 @@ namespace fixed_wing{
     }
 
     template <typename T>
+    void advanced_aerodynamics(const Parameters<T>& p, const Body<T>& x, T force[3], T moment[3]){
+        // AdvancedLiftDrag::Update and MulticopterMotorModel (velocity motor), written in the body frame
+        using namespace advanced;
+        T R[3][3];
+        rotation_matrix(x.orientation, R);
+        T air[3], body[3];
+        for(int i = 0; i < 3; i++) air[i] = x.linear_velocity[i] - p.wind[i];
+        rotate_inverse(R, air, body);
+        const T* w = x.angular_velocity;  // FLU
+        // air velocity at the center of pressure (-cp, 0, 0 in FLU), in FRD
+        T u = body[0], v = -(body[1] + w[2] * T(cp)), wz = -(body[2] - w[1] * T(cp));
+        T f[3] = {0, 0, 0}, m[3] = {0, 0, 0};  // FRD
+        T V = std::sqrt(u * u + wz * wz);  // speed in the lift-drag plane: the sideslip part does not count
+        if(V > T(1e-9)){
+            T S = T(area), b = p.wing_span, c = T(mac);
+            T alpha = std::atan2(wz, u), beta = std::atan2(v, u);
+            T sa = std::sin(alpha), ca = std::cos(alpha);
+            T P = w[0], Q = -w[1], Rr = -w[2];  // FRD rates
+            T dyn = T(0.5) * p.air_density * V * V, hrv = T(0.5) * p.air_density * V;
+            T up = std::exp(-T(M) * (alpha - T(alpha_stall))), down = std::exp(T(M) * (alpha + T(alpha_stall)));
+            T sigma = (1 + up + down) / ((1 + up) * (1 + down));  // 0 before the stall, 1 after it
+            // joint angles in degrees: servo_0 = aileron, servo_1 = -aileron, servo_2 = elevator, servo_3 = rudder
+            T deg = T(180 / PI);
+            T angle[4] = {x.actuators[AILERON] * deg, -x.actuators[AILERON] * deg, x.actuators[ELEVATOR] * deg, x.actuators[RUDDER] * deg};
+            T CL_c = 0, CD_c = 0, CY_c = 0, Cell_c = 0, Cem_c = 0, Cen_c = 0;
+            for(int i = 0; i < 4; i++){
+                CL_c += angle[i] * T(CL_ctrl[i]); CD_c += angle[i] * T(CD_ctrl[i]); CY_c += angle[i] * T(CY_ctrl[i]);
+                Cell_c += angle[i] * T(Cell_ctrl[i]); Cem_c += angle[i] * T(Cem_ctrl[i]); Cen_c += angle[i] * T(Cen_ctrl[i]);
+            }
+            T sign = alpha >= 0 ? T(1) : T(-1);
+            T CL = (1 - sigma) * (T(CL0) + T(CLa) * alpha) + sigma * (2 * sign * sa * sa * ca) + CL_c;
+            T lift = (CL * dyn + T(CLp) * (P * b / 2) * hrv + T(CLq) * (Q * c / 2) * hrv + T(CLr) * (Rr * b / 2) * hrv) * S;
+            T CD_fp = 2 / (1 + std::exp(T(CD_fp_k1) + T(CD_fp_k2) * std::fmax(T(AR), 1 / T(AR))));
+            T CD = (1 - sigma) * (T(CD0) + CL * CL / (T(PI) * T(AR) * T(eff))) + sigma * std::abs(CD_fp * (T(0.5) - T(0.5) * std::cos(2 * alpha))) + CD_c;
+            T drag = (CD * dyn + T(CDp) * (P * b / 2) * hrv + T(CDq) * (Q * c / 2) * hrv + T(CDr) * (Rr * b / 2) * hrv) * S;
+            T CY = T(CYb) * beta + CY_c;
+            T side = (CY * dyn + T(CYp) * (P * b / 2) * hrv + T(CYq) * (Q * c / 2) * hrv + T(CYr) * (Rr * b / 2) * hrv) * S;
+            T Cem = alpha > T(alpha_stall) ? T(Cem0) + T(Cema) * T(alpha_stall) + T(Cema_stall) * (alpha - T(alpha_stall))
+                  : alpha < -T(alpha_stall) ? T(Cem0) - T(Cema) * T(alpha_stall) + T(Cema_stall) * (alpha + T(alpha_stall))
+                  : T(Cem0) + T(Cema) * alpha;
+            Cem += Cem_c;
+            T Cell = T(Cellb) * beta + Cell_c, Cen = T(Cenb) * beta + Cen_c;
+            // lift along -z of the stability axes, (sin alpha, 0, -cos alpha); drag along -(cos alpha, 0, sin alpha)
+            f[0] = lift * sa - drag * ca;
+            f[1] = side;
+            f[2] = -lift * ca - drag * sa;
+            m[0] = (Cell * dyn + T(Cellp) * (P * b / 2) * hrv + T(Cellq) * (Q * c / 2) * hrv + T(Cellr) * (Rr * b / 2) * hrv) * S * b;
+            m[1] = (Cem * dyn + T(Cemp) * (P * b / 2) * hrv + T(Cemq) * (Q * c / 2) * hrv + T(Cemr) * (Rr * b / 2) * hrv) * S * c;
+            m[2] = (Cen * dyn + T(Cenp) * (P * b / 2) * hrv + T(Cenq) * (Q * c / 2) * hrv + T(Cenr) * (Rr * b / 2) * hrv) * S * b;
+            // the force acts at the center of pressure (cp, 0, 0): cp x f
+            m[1] += -T(cp) * f[2];
+            m[2] += T(cp) * f[1];
+        }
+        force[0] = f[0]; force[1] = -f[1]; force[2] = -f[2];  // FRD -> FLU
+        moment[0] = m[0]; moment[1] = -m[1]; moment[2] = -m[2];
+        // propeller, in FLU: thrust along x, reaction torque about x, rotor drag against the air velocity across the axis
+        T omega = T(rotor_speed_min) + (T(rotor_speed_max) - T(rotor_speed_min)) * x.actuators[THROTTLE];
+        T thrust = p.thrust_max * (omega / T(rotor_speed_max)) * (omega / T(rotor_speed_max));
+        force[0] += thrust;
+        moment[0] += T(moment_constant) * thrust;
+        T across[3] = {0, body[1] + w[2] * T(rotor_x), body[2] - w[1] * T(rotor_x)};  // air velocity of the rotor, minus x
+        T rotor_force[3] = {0, -omega * T(rotor_drag) * across[1], -omega * T(rotor_drag) * across[2]};
+        for(int i = 1; i < 3; i++){
+            force[i] += rotor_force[i];
+            moment[i] += -omega * T(rolling_moment) * across[i];
+        }
+        moment[1] += -T(rotor_x) * rotor_force[2];  // (rotor_x, 0, 0) x rotor_force
+        moment[2] += T(rotor_x) * rotor_force[1];
+    }
+
+    template <typename T>
     void aerodynamics(const Parameters<T>& p, const Body<T>& x, T force[3], T moment[3]){
         // aerodynamic + propulsion force and moment in the body frame (x forward, y left, z up)
+        if constexpr(FW_AIRPLANE == 1){
+            advanced_aerodynamics(p, x, force, moment);
+            return;
+        }
         const T* c = p.aerodynamics;
         T delta_a = x.actuators[AILERON], delta_e = x.actuators[ELEVATOR], delta_r = x.actuators[RUDDER];
         T f[3] = {x.actuators[THROTTLE] * p.thrust_max, 0, 0};  // FRD
@@ -203,7 +337,11 @@ namespace fixed_wing{
             moment[2] - (w[0] * Jw[1] - w[1] * Jw[0]),
         };
         for(int i = 0; i < 3; i++) dx.angular_velocity[i] = p.J_inv[i][0] * rhs[0] + p.J_inv[i][1] * rhs[1] + p.J_inv[i][2] * rhs[2];
-        for(int i = 0; i < N_ACTUATORS; i++) dx.actuators[i] = (command[i] - x.actuators[i]) / p.actuator_time_constants[i];
+        for(int i = 0; i < N_ACTUATORS; i++){
+            T tau = p.actuator_time_constants[i];
+            if(i == THROTTLE && p.throttle_time_constant_down > 0 && command[i] < x.actuators[i]) tau = p.throttle_time_constant_down;
+            dx.actuators[i] = (command[i] - x.actuators[i]) / tau;
+        }
     }
 
     template <typename T>
@@ -564,7 +702,8 @@ namespace fixed_wing{
 
     template <typename T>
     void task_parameters(const TaskConfig<T>& config, Parameters<T>& p){
-        aerosonde(p);
+        if constexpr(FW_AIRPLANE == 1) advanced_plane(p);
+        else aerosonde(p);
         p.dt = 1 / config.frequency;
         p.n_substeps = config.n_substeps;
         p.latency_steps = config.latency_steps;

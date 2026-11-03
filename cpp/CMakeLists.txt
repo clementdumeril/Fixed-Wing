@@ -114,6 +114,16 @@ foreach(critic 128 64)
     endforeach()
 endforeach()
 
+# the tracking task on PX4's advanced_plane instead of the Aerosonde, to fly the policy in Gazebo with PX4 SITL
+foreach(critic 256 128)
+    set(target train_sac_c${critic}_b64_tracking_g995_px4plane)
+    add_executable(${target} src/train_sac.cpp)
+    target_include_directories(${target} PRIVATE include)
+    target_link_libraries(${target} PRIVATE RLtools::RLtools)
+    target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=${critic} FW_BATCH=64 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1)
+    list(APPEND TRAIN_TARGETS ${target})
+endforeach()
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)

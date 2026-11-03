@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>fw_policy</name>
+  <version>0.1.0</version>
+  <description>Flies a fixed-wing tracking policy trained with RLtools on PX4, offboard with direct actuator control</description>
+  <maintainer email="clement_dumeril@berkeley.edu">Clément Dumeril</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>px4_msgs</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

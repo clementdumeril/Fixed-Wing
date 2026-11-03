@@ -96,6 +96,33 @@ sbatch savio/tracking_alpha.slurm     # gain 0.1 with a margin to the stall, wei
 sbatch savio/tracking_integral.slurm  # gain 0.1, margin weight 1, with the integral of the position error, 10 seeds
 sbatch savio/tracking_critic.slurm    # critics of 256, 128 and 64, 400k steps, curriculum check every 40k, 10 seeds
 sbatch savio/profile.slurm            # time of each part of a training step for the three critics
+sbatch savio/tracking_px4plane.slurm  # tracking on PX4's advanced_plane, critic 128, 400k steps, 10 seeds
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
+
+## PX4's advanced_plane and flying the policy in Gazebo
+
+`FW_AIRPLANE=1` (targets `train_sac_c{256,128}_b64_tracking_g995_px4plane`) replaces the Aerosonde with the
+`advanced_plane` of PX4's Gazebo models, as Gazebo simulates it: the gz-sim AdvancedLiftDrag system with the
+coefficients of its `model.sdf`, its puller propeller (MulticopterMotorModel), servos that follow their command with
+about 0.1 s of lag, and PX4's SITL output mapping (motor 10 to 1600 rad/s, servos ±1 = ±45°). It is a 1 kg airplane:
+it trims at 15 m/s with 24.8% throttle (PX4's `FW_THR_TRIM` for it is 25%), so the tracking task uses 12-18 m/s for
+the point and the stall limits move to −15°/18°. C++ only.
+
+`tools/export_policy.py <run>/actor.h <out.h>` writes a trained actor as plain C++ (weights and a 30-line forward
+pass), identical to RLtools' evaluation. `deploy/ros2/fw_policy` is a ROS 2 node that flies it on PX4: at 50 Hz it reads
+PX4's odometry over uXRCE-DDS, builds the training observation with `observe_actor`, and sends the servo and motor
+commands offboard with direct actuator control; it hands back to PX4 (loiter) after 60 s, below 15 m or beyond 300 m
+from the point. On Ubuntu 24.04 with ROS 2 Jazzy, after PX4's `Tools/setup/ubuntu.sh` and `make px4_sitl`:
+
+```bash
+python tools/export_policy.py <run>/actor.h deploy/ros2/fw_policy/policy/policy_weights.h
+bash deploy/ros2/setup_wsl.sh ~/PX4-Autopilot <RLtools include directory>  # DDS agent, px4_msgs, the node (no sudo)
+bash deploy/ros2/fly_sitl.sh                       # PX4 + Gazebo headless, PX4 takes off, the policy flies above 40 m
+```
+
+`fly_sitl.sh` writes the flight (state, point and commands at each step) to `~/fw_flights/<date>/flight.csv`. The
+policy in `policy_weights.h` is seed 3 of the 400k-step critic-128 runs on this airplane: its first SITL flight took
+over at 44 m/s during PX4's climb, settled at 15 m/s and followed the point at 15 m RMSE over the last 30 s, about 8 m
+below it.

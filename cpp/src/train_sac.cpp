@@ -542,7 +542,8 @@ int run(int argc, char** argv){
         << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
         << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
         << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")
-        << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"position_scale\": " << position_scale
+        << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"airplane\": \""
+        << (FW_AIRPLANE == 1 ? "px4_advanced_plane" : "aerosonde") << "\",\n  \"position_scale\": " << position_scale
         << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL

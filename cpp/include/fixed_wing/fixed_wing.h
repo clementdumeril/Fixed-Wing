@@ -17,6 +17,12 @@
 #ifndef FW_TRACKING
 #define FW_TRACKING 0
 #endif
+// 0: Aerosonde (Beard & McLain), the placeholder of the Python simulator. 1: the advanced_plane of PX4's Gazebo models
+// (1 kg, AVL coefficients, gz-sim AdvancedLiftDrag and MulticopterMotorModel), so that a policy trained here can fly in
+// Gazebo with PX4 software-in-the-loop (train_sac_*_px4plane). C++ only.
+#ifndef FW_AIRPLANE
+#define FW_AIRPLANE 0
+#endif
 
 namespace fixed_wing{
     // order of the actions and of Body::actuators
@@ -50,8 +56,9 @@ namespace fixed_wing{
         T wing_span;
         T mean_chord;
         T aerodynamics[N_COEFFICIENTS];
-        T thrust_max;  // thrust = throttle * thrust_max, along body x
+        T thrust_max;  // thrust = throttle * thrust_max, along body x (advanced_plane: at full rotor speed)
         T actuator_time_constants[N_ACTUATORS];
+        T throttle_time_constant_down;  // > 0: the throttle goes down with this time constant (advanced_plane rotor)
         T actuator_limits[N_ACTUATORS][2];  // rad for the surfaces, [0, 1] for the throttle
         T dt;  // control period
         int n_substeps;  // RK4 steps per control period, the command is held over all of them
@@ -113,8 +120,13 @@ namespace fixed_wing{
         // so that the policy sees the stall coming instead of only the end of the flight. Off by default (not in Python).
         // Inside the cap for the setpoint task, outside it for the tracking task (reward_from_tracking_errors)
         T alpha_margin_weight = 0;
+#if FW_AIRPLANE == 1
+        T alpha_soft_min = T(-0.19198621771937624);  // -11 deg, 4 deg before the limits of the advanced_plane
+        T alpha_soft_max = T(0.24434609527920614);  // 14 deg
+#else
         T alpha_soft_min = T(-0.10471975511965977);  // -6 deg
         T alpha_soft_max = T(0.19198621771937624);  // 11 deg
+#endif
         T alpha_margin_scale = T(0.06981317007977318);  // 4 deg: costs the weight at the limit
         // 0: squared airspeed, altitude and course errors. > 0: Huber (smooth L1) on the scaled errors, quadratic below
         // huber_delta and linear above, so that small errors still cost (the square is flat near 0)
@@ -151,14 +163,24 @@ namespace fixed_wing{
         int n_substeps = 2;
         int latency_steps = 1;
         T altitude_range[2] = {50, 120};  // m
+#if FW_AIRPLANE == 1
+        // advanced_plane: 1 kg, 0.34 m2, stalls near 6 m/s and cruises near 15 m/s at 25% throttle (PX4 FW_THR_TRIM)
+        T airspeed_range[2] = {12, 18};  // m/s
+#else
         T airspeed_range[2] = {20, 30};  // m/s
+#endif
         T altitude_change_max = 20;  // m
         T course_change_max = T(1.5707963267948966);  // 90 deg
         T roll_max = T(0.3490658503988659);  // 20 deg
         T pitch_max = T(0.17453292519943295);  // 10 deg
         T rate_max = 0.3;  // rad/s
+#if FW_AIRPLANE == 1
+        T alpha_range[2] = {T(-0.2617993877991494), T(0.3141592653589793)};  // -15, 18 deg: its stall is at 19.4 deg
+        T airspeed_limits[2] = {7, 30};  // m/s
+#else
         T alpha_range[2] = {T(-0.17453292519943295), T(0.2617993877991494)};  // -10, 15 deg
         T airspeed_limits[2] = {15, 40};  // m/s
+#endif
         T altitude_error_max = 50;  // m
         T altitude_floor = 20;  // m
         T randomization = 0;  // every factor uniform in [1 - r, 1 + r]
@@ -168,7 +190,11 @@ namespace fixed_wing{
         T random_roll_max = T(1.0471975511965976);  // 60 deg
         T random_pitch_max = T(0.3490658503988659);  // 20 deg
         T random_rate_max = 0.5;  // rad/s
+#if FW_AIRPLANE == 1
+        T random_airspeed_range[2] = {11, 19};  // m/s
+#else
         T random_airspeed_range[2] = {18, 32};  // m/s
+#endif
         T random_alpha_range[2] = {T(-0.06981317007977318), T(0.17453292519943295)};  // -4, 10 deg
         T random_beta_max = T(0.13962634015954636);  // 8 deg
         // clip of the error integrals, also their observation scale: about 20 s of 1 m/s, 5 m and 14 deg
@@ -184,7 +210,11 @@ namespace fixed_wing{
         // around it (about half the starts put the point behind, which takes steep turns to reach); 45 deg is ahead
         T reference_bearing_max = T(3.141592653589793);  // rad
         T reference_altitude_offset_max = 15;  // m
+#if FW_AIRPLANE == 1
+        T reference_speed_range[2] = {12, 18};  // m/s, horizontal
+#else
         T reference_speed_range[2] = {20, 28};  // m/s, horizontal
+#endif
         T reference_climb_max = 1;  // m/s
         T reference_altitude_range[2] = {40, 140};  // m, over the 30 s of an episode
         T position_error_max = 300;  // m: farther from the reference, the flight ends

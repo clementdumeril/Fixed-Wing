@@ -40,11 +40,12 @@ namespace rl_tools{
 
     template <typename DEVICE, typename SPEC>
     void initial_state(DEVICE&, const fixed_wing::Environment<SPEC>& env, const typename fixed_wing::Environment<SPEC>::Parameters& p, typename fixed_wing::Environment<SPEC>::State& s){
-        // level flight along x at 25 m/s, 85 m, setpoint = current flight
+        // level flight along x at the middle of the airspeed range (25 m/s for the Aerosonde), 85 m, setpoint = current flight
         using T = typename SPEC::T;
-        fixed_wing::Body<T> body = fixed_wing::trim(p, T(25));
+        T airspeed = (env.config.airspeed_range[0] + env.config.airspeed_range[1]) / 2;
+        fixed_wing::Body<T> body = fixed_wing::trim(p, airspeed);
         body.position[2] = T(85);
-        fixed_wing::start_state(p, body, T(25), T(85), T(0), s);
+        fixed_wing::start_state(p, body, airspeed, T(85), T(0), s);
     }
 
     template <typename DEVICE, typename SPEC, typename RNG>
