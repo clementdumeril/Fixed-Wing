@@ -22,6 +22,10 @@
 //   --curriculum-period: airplane steps between two checks of the curriculum gate (default 100000, as L2F)
 //   --profile: time each part of a training step (airplanes, batch, critics, critic targets, actor and entropy
 //   coefficient) and write profile.json
+//   --checkpoint-interval N: every N airplane steps, fly the actor on 100 validation flights (random starts, not the
+//   test flights) and keep the best one: best_actor.h, its tests in evaluation_best*.json and checkpoints.csv. The
+//   score is the RMS error of the completed flights (position, or course for the course task) + 10 per % of failed
+//   flights. The validation flights have their own random numbers, so training is the same as without the option
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL)
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
@@ -58,6 +62,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -364,9 +369,11 @@ std::vector<ENVIRONMENT::State> sampled_starts(DEVICE& device, TI seed, fixed_wi
 
 constexpr TI N_RECORDED = 10;  // test flights written to the flights CSV, for plots
 
+struct EvaluationSummary{ double success_rate = 0, error = 0; };  // error: RMS position (tracking) or course (deg) error
+
 template <typename ACTOR>
 std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<ENVIRONMENT::State>& starts, RNG& rng,
-                     const std::filesystem::path& flights_csv){
+                     const std::filesystem::path& flights_csv, EvaluationSummary* summary = nullptr){
     using EVAL_ACTOR = typename ACTOR::template CHANGE_BATCH_SIZE<TI, N_SCENARIOS>::template CHANGE_CAPABILITY<rlt::nn::capability::Forward<true>>;
     typename EVAL_ACTOR::template State<true> actor_state;
     typename EVAL_ACTOR::template Buffer<true> actor_buffer;
@@ -392,7 +399,8 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<ENVIR
         states[k] = starts[k];
         for(int i = 0; i < 4; i++) previous[k][i] = states[k].action_history[fixed_wing::ACTION_HISTORY - 1][i];
     }
-    std::ofstream flights(flights_csv);
+    std::ofstream flights;  // not opened without a path: the writes then do nothing
+    if(!flights_csv.empty()) flights.open(flights_csv);
     flights << "scenario,t,x,y,altitude,roll_deg,pitch_deg,heading_deg,airspeed,alpha_deg,beta_deg,course_deg,"
                "setpoint_airspeed,setpoint_altitude,setpoint_course_deg,reference_x,reference_y,reference_altitude,"
                "aileron,elevator,rudder,throttle,termination\n";
@@ -471,6 +479,12 @@ std::string evaluate(DEVICE& device, const ACTOR& actor, const std::vector<ENVIR
     json << ",\n  \"mean_action_change\": " << smoothness / std::max(complete, 1)
          << ",\n  \"failures_within_5_s\": " << early
          << ",\n  \"failed_flights_mean_max_bank_deg\": " << failed_bank / std::max(int(N_SCENARIOS) - complete, 1) << "\n}\n";
+    if(summary){
+        summary->success_rate = complete / double(N_SCENARIOS);
+        // no completed flight: no error to compare, and no checkpoint to keep
+        summary->error = complete > 0 ? (FW_TRACKING ? rms[3] : rms[2] * 180 / fixed_wing::PI) / complete
+                                      : std::numeric_limits<double>::infinity();
+    }
     rlt::free(device, actor_state);
     rlt::free(device, actor_buffer);
     rlt::free(device, observations);
@@ -491,7 +505,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -510,6 +524,7 @@ int run(int argc, char** argv){
     T_ENV bearing_max_deg = 180;
     int fixed_stage = -1;  // >= 0: no curriculum, the reward weights of that stage from the start
     TI curriculum_period = Curriculum{}.period;
+    TI checkpoint_interval = 0;  // 0: no validation flights, only the final actor
     bool profile = false;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
@@ -522,6 +537,7 @@ int run(int argc, char** argv){
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
         else if(option == "--curriculum-stage" && i + 1 < argc) fixed_stage = std::stoi(argv[++i]);
         else if(option == "--curriculum-period" && i + 1 < argc) curriculum_period = std::stoul(argv[++i]);
+        else if(option == "--checkpoint-interval" && i + 1 < argc) checkpoint_interval = std::stoul(argv[++i]);
         else if(option == "--no-trim-reward") trim_reward = false;
         else if(option == "--profile") profile = true;
         else throw std::runtime_error("unknown option " + option);
@@ -537,6 +553,7 @@ int run(int argc, char** argv){
     constexpr TI N_ENVIRONMENTS = LOOP_CORE_PARAMETERS::N_ENVIRONMENTS;
     if(steps % N_ENVIRONMENTS != 0) throw std::runtime_error("steps must be a multiple of the number of airplanes");
     if(curriculum_period == 0 || curriculum_period % 10000 != 0) throw std::runtime_error("--curriculum-period must be a positive multiple of 10000");
+    if(checkpoint_interval % N_ENVIRONMENTS != 0) throw std::runtime_error("--checkpoint-interval must be a multiple of the number of airplanes");
     std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"steps\": " << steps
         << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH << ",\n  \"gamma\": " << FW_GAMMA
         << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
@@ -547,7 +564,8 @@ int run(int argc, char** argv){
         << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
-        << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
+        << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
+        << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -595,6 +613,22 @@ int run(int argc, char** argv){
     auto& runner = ts.off_policy_runner;
     TI next_check = curriculum.period;
     Profile timing;
+    // best checkpoint on the validation flights (--checkpoint-interval)
+    using ACTOR = std::remove_cv_t<std::remove_reference_t<decltype(rlt::get_actor(ts))>>;
+    ACTOR best_actor;
+    RNG validation_rng;
+    std::vector<ENVIRONMENT::State> validation;
+    std::ofstream checkpoints;
+    double best_score = std::numeric_limits<double>::infinity();
+    TI best_step = 0;
+    if(checkpoint_interval > 0){
+        rlt::malloc(device, best_actor);
+        rlt::malloc(device, validation_rng);
+        rlt::init(device, validation_rng, seed + 1);
+        validation = sampled_starts(device, 54321, fixed_wing::RANDOM);  // other flights than the tests (12345)
+        checkpoints.open(out_dir / "checkpoints.csv");
+        checkpoints << "step,success_rate," << (FW_TRACKING ? "position_rmse" : "course_rmse_deg") << ",score\n";
+    }
     // step counts airplane steps: one loop step flies all the airplanes
     for(TI step = N_ENVIRONMENTS; step <= steps; step += N_ENVIRONMENTS){
         if(profile) profiled_step(device, ts, timing);
@@ -617,6 +651,17 @@ int run(int argc, char** argv){
             }
             next_check += curriculum.period;
         }
+        if(checkpoint_interval > 0 && step % checkpoint_interval == 0){
+            EvaluationSummary s;
+            evaluate(device, rlt::get_actor(ts), validation, validation_rng, {}, &s);
+            double score = s.error + 1000 * (1 - s.success_rate);  // 10 per % of failed flights
+            checkpoints << step << "," << s.success_rate << "," << s.error << "," << score << std::endl;
+            if(score < best_score){
+                best_score = score;
+                best_step = step;
+                rlt::copy(device, device, rlt::get_actor(ts), best_actor);
+            }
+        }
     }
     double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     if(profile){
@@ -634,20 +679,33 @@ int run(int argc, char** argv){
         json << "\n}\n";
         std::cout << "  (whole loop " << seconds / loop_steps * 1e6 << " per step)" << std::endl;
     }
-    save_actor(device, rlt::get_actor(ts), out_dir / "actor.h");
     // test A: the Python scenarios, or for tracking normal flights (neutral start); test B: random starts
     std::vector<ENVIRONMENT::State> test_a = FW_TRACKING ? sampled_starts(device, 12345, fixed_wing::NEUTRAL) : start_states(scenarios);
-    std::string result = evaluate(device, rlt::get_actor(ts), test_a, ts.rng, out_dir / "flights.csv");
-    std::ofstream(out_dir / "evaluation.json") << result;
-    std::string result_random = evaluate(device, rlt::get_actor(ts), sampled_starts(device, 12345, fixed_wing::RANDOM), ts.rng,
-                                         out_dir / "flights_random.csv");
-    std::ofstream(out_dir / "evaluation_random.json") << result_random;
-    if constexpr(FW_TRACKING){  // test B with the point within 45 deg ahead, as a trajectory planner would place it
-        std::string result_ahead = evaluate(device, rlt::get_actor(ts), sampled_starts(device, 12345, fixed_wing::RANDOM,
-                                            45 * fixed_wing::PI / 180), ts.rng, out_dir / "flights_ahead.csv");
-        std::ofstream(out_dir / "evaluation_ahead.json") << result_ahead;
+    auto test = [&](const ACTOR& actor, const std::string& prefix){  // prefix "" for the final actor, "best" for the best
+        std::string tag = prefix.empty() ? "" : "_" + prefix;
+        save_actor(device, actor, out_dir / (prefix + (prefix.empty() ? "" : "_") + "actor.h"));
+        std::string result = evaluate(device, actor, test_a, ts.rng, out_dir / ("flights" + tag + ".csv"));
+        std::ofstream(out_dir / ("evaluation" + tag + ".json")) << result;
+        std::string result_random = evaluate(device, actor, sampled_starts(device, 12345, fixed_wing::RANDOM), ts.rng,
+                                             out_dir / ("flights" + tag + "_random.csv"));
+        std::ofstream(out_dir / ("evaluation" + tag + "_random.json")) << result_random;
+        if constexpr(FW_TRACKING){  // test B with the point within 45 deg ahead, as a trajectory planner would place it
+            std::string result_ahead = evaluate(device, actor, sampled_starts(device, 12345, fixed_wing::RANDOM,
+                                                45 * fixed_wing::PI / 180), ts.rng, out_dir / ("flights" + tag + "_ahead.csv"));
+            std::ofstream(out_dir / ("evaluation" + tag + "_ahead.json")) << result_ahead;
+        }
+        std::cout << (prefix.empty() ? "" : prefix + " actor:\n") << result << "random starts:\n" << result_random;
+    };
+    test(rlt::get_actor(ts), "");
+    if(checkpoint_interval > 0){
+        if(best_step > 0){  // at least one checkpoint
+            std::cout << "best checkpoint: step " << best_step << ", validation score " << best_score << std::endl;
+            test(best_actor, "best");
+        }
+        rlt::free(device, best_actor);
+        rlt::free(device, validation_rng);
     }
-    std::cout << result << "random starts:\n" << result_random << "training seconds: " << seconds << std::endl;
+    std::cout << "training seconds: " << seconds << std::endl;
     rlt::free(device, ts);
     return 0;
 }

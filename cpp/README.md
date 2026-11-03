@@ -61,7 +61,10 @@ the position error, with a forgetting time of 10 s so that the approach fades ou
 `evaluation_ahead.json`: test B with the point within 45° ahead. This task exists in C++ only.
 `--curriculum-period P` checks the curriculum gate every P steps (default 100k) and `--curriculum-stage S` trains
 with the weights of stage S from the start, without curriculum. `--profile` times each part of a training step and
-writes `profile.json`. The `train_sac_*_e<N>` targets fly N airplanes in parallel, with one network update per step of
+writes `profile.json`. `--checkpoint-interval N` flies the actor every N steps on 100 validation flights (random
+starts, other than the tests) and keeps the best: `best_actor.h`, its tests in `evaluation_best*.json` and the scores
+in `checkpoints.csv` (RMS position error + 10 m per % of failed flights). The scores of a run can swing by 10 m
+between checkpoints 50k steps apart, so the last actor is often not the best one. The `train_sac_*_e<N>` targets fly N airplanes in parallel, with one network update per step of
 all of them.
 The `train_sac_*_i<K>` targets update the networks every K steps only, as the L2F configurations of RLtools: each
 step is about K times cheaper.
@@ -97,6 +100,7 @@ sbatch savio/tracking_integral.slurm  # gain 0.1, margin weight 1, with the inte
 sbatch savio/tracking_critic.slurm    # critics of 256, 128 and 64, 400k steps, curriculum check every 40k, 10 seeds
 sbatch savio/profile.slurm            # time of each part of a training step for the three critics
 sbatch savio/tracking_px4plane.slurm  # tracking on PX4's advanced_plane, critic 128, 400k steps, 10 seeds
+sbatch savio/tracking_px4plane_long.slurm  # the same for 3M steps, keeping the best checkpoint, 10 seeds
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
@@ -122,10 +126,22 @@ bash deploy/ros2/setup_wsl.sh ~/PX4-Autopilot <RLtools include directory>  # DDS
 bash deploy/ros2/fly_sitl.sh                       # PX4 + Gazebo headless, PX4 takes off, the policy flies above 40 m
 ```
 
-`fly_sitl.sh` writes the flight (state, point and commands at each step) to `~/fw_flights/<date>/flight.csv`. `compare_sitl <flight.csv>`
-flies the same policy in this simulator from the same state and point, and predicts each logged step with this
-simulator's model from Gazebo's state and command: the mean and RMS residuals show which part of the model disagrees
-(`residuals.csv`). The
-policy in `policy_weights.h` is seed 3 of the 400k-step critic-128 runs on this airplane: its first SITL flight took
-over at 44 m/s during PX4's climb, settled at 15 m/s and followed the point at 15 m RMSE over the last 30 s, about 8 m
-below it.
+`fly_sitl.sh` writes the flight (state, point and commands at each step) to `~/fw_flights/<date>/flight.csv`. The node
+takes over once PX4 is armed above 40 m and below 20 m/s (`max_start_speed`; `-p wait_for_loiter:=true` also waits for
+PX4's loiter), and it moves the point on PX4's clock, the simulation's in SITL: when the PC freezes for a few seconds,
+the simulation stops and the point with it. `compare_sitl <flight.csv>` flies the same policy in this simulator from
+the same state and point, and predicts each logged step with this simulator's model from Gazebo's state and command:
+the mean and RMS residuals show which part of the model disagrees (`residuals.csv`).
+
+`IDENTIFY=1 bash deploy/ros2/fly_sitl.sh` is an identification flight: the policy flies, with doublets of each command
+on top (fw_policy_node.cpp), and Gazebo's joint states are recorded (it adds Gazebo's JointStatePublisher to the
+`advanced_plane` model of the PX4 checkout; it only publishes). `python tools/sitl_truth.py <flight directory>` turns
+them into `truth.csv`, a flight log of Gazebo's exact state and measured surface positions, and `compare_sitl truth.csv`
+then compares the two models without PX4's state estimate. On the first identification flight, the servos follow
+their command with 0.1 s of lag as modelled, and the step-by-step residuals have no bias (accelerations within
+0.2 m/s² and 0.2 rad/s²): the residual biases measured from PX4's odometry came from its estimate and timing.
+
+The policy in `policy_weights.h` is seed 9 of the 400k-step critic-128 runs on this airplane (`tracking_px4plane`,
+Savio): in its SITL flight it followed the point at 20 m RMSE over the last 30 s, and this simulator flies the same
+flight at 20 m, 6 m below the point in both. Seed 3, the first policy flown, followed it at 15 m in Gazebo but 9 m in
+this simulator: its commands changed 10 times more from step to step, and amplified the noise of PX4's estimate.
