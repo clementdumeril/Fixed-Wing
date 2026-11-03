@@ -6,7 +6,10 @@
 // Sequence: PX4 takes off and loiters on its own (commander takeoff). Once armed and above start_altitude, the node
 // places a reference point as in training (start_distance away, start_bearing_deg from the course, flying straight at
 // reference_speed along the course) and switches PX4 to offboard. It hands back to PX4 (loiter) after duration s, or
-// when the airplane goes below min_altitude or more than 300 m from the point. Every step is written to log_path.
+// when the airplane goes below min_altitude or more than 300 m from the point. Every step is written to log_path, with
+// PX4's time (Gazebo's simulation time in SITL) to align it with other Gazebo logs.
+// identify:=true: the policy flies, and doublets replace one command at a time (aileron, elevator, rudder, then a
+// throttle step), twice with growing amplitudes, to measure the servo and motor response and the control effectiveness.
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -76,6 +79,12 @@ public:
         start_bearing_ = declare_parameter("start_bearing_deg", 30.0) * fixed_wing::PI / 180;
         reference_speed_ = declare_parameter("reference_speed", 15.0);  // m/s
         duration_ = declare_parameter("duration", 60.0);  // s
+        identify_ = declare_parameter("identify", false);
+        // take over only once PX4 loiters (level flight after its takeoff), not during its full-throttle climb
+        wait_for_loiter_ = declare_parameter("wait_for_loiter", false);
+        // and below the speeds of training's random starts (11 to 19 m/s): PX4 switches to loiter at its takeoff
+        // altitude while still at full throttle (44 m/s, climbing at 20 m/s)
+        max_start_speed_ = declare_parameter("max_start_speed", 20.0);  // m/s, ground speed (no wind in SITL)
         std::string log_path = declare_parameter("log_path", std::string("fw_policy_flight.csv"));
         auto topic = [&](const char* name, const char* fallback){ return declare_parameter(name, std::string(fallback)); };
         fixed_wing::TaskConfig<T> config;
@@ -91,7 +100,7 @@ public:
         servos_pub_ = create_publisher<px4_msgs::msg::ActuatorServos>(topic("servos_topic", "/fmu/in/actuator_servos_v1"), 10);
         log_.open(log_path);
         log_ << "t,x,y,altitude,vx,vy,vz,qw,qx,qy,qz,p,q,r,reference_x,reference_y,reference_altitude,"
-                "aileron,elevator,rudder,throttle,nav_state\n";
+                "aileron,elevator,rudder,throttle,nav_state,px4_time\n";
         timer_ = create_wall_timer(20ms, [this]{ step(); });  // 50 Hz, the control period of training
         RCLCPP_INFO(get_logger(), "waiting for PX4 to be armed above %.0f m", start_altitude_);
     }
@@ -100,6 +109,21 @@ private:
     enum Phase{WAITING, SWITCHING, FLYING, DONE};
 
     uint64_t now_us(){ return get_clock()->now().nanoseconds() / 1000; }
+
+    // identification: from t, each doublet sets one command to first for half (s), then to second for half
+    struct Doublet{ int axis; T t, first, second, half; };
+    static constexpr Doublet doublets[8] = {
+        {fixed_wing::AILERON, 10, 0.3, -0.3, 0.5}, {fixed_wing::ELEVATOR, 14, 0.2, -0.2, 0.5},
+        {fixed_wing::RUDDER, 18, 0.3, -0.3, 0.5}, {fixed_wing::THROTTLE, 22, 0.6, -0.9, 1.0},
+        {fixed_wing::AILERON, 30, 0.6, -0.6, 0.5}, {fixed_wing::ELEVATOR, 34, 0.4, -0.4, 0.5},
+        {fixed_wing::RUDDER, 38, 0.6, -0.6, 0.5}, {fixed_wing::THROTTLE, 42, 1.0, -1.0, 1.0}};
+
+    void override_for_identification(T t, float action[fixed_wing::policy::ACTIONS]){
+        for(const auto& d: doublets){
+            if(t >= d.t && t < d.t + d.half) action[d.axis] = float(d.first);
+            else if(t >= d.t + d.half && t < d.t + 2 * d.half) action[d.axis] = float(d.second);
+        }
+    }
 
     void command(uint16_t id, float param1 = 0, float param2 = 0, float param3 = 0){
         px4_msgs::msg::VehicleCommand c{};
@@ -141,11 +165,19 @@ private:
         if(!have_odometry_ || !have_status_) return;
         fixed_wing::State<T> s{};
         read_body(s.body);
-        T t = (now_us() - start_us_) * 1e-6;
+        T t = (now_us() - start_us_) * 1e-6;  // wall clock: only for the offboard switch timeout
+        // flight time on PX4's clock: in SITL the simulation's, which stops when the PC freezes, unlike the wall clock
+        // (the point would jump ahead). The clock synchronization's own jumps are left out
+        if(last_px4_us_ > 0 && odometry_.timestamp > last_px4_us_){
+            flight_time_ += std::min((odometry_.timestamp - last_px4_us_) * 1e-6, 0.1);
+        }
+        last_px4_us_ = odometry_.timestamp;
         if(phase_ == WAITING){
             heartbeats_++;
             bool armed = status_.arming_state == px4_msgs::msg::VehicleStatus::ARMING_STATE_ARMED;
             if(!armed || s.body.position[2] < start_altitude_ || heartbeats_ < 50) return;
+            if(wait_for_loiter_ && status_.nav_state != px4_msgs::msg::VehicleStatus::NAVIGATION_STATE_AUTO_LOITER) return;
+            if(fixed_wing::norm3(s.body.linear_velocity) > max_start_speed_) return;
             // the reference point as in training, relative to the current course
             T course = std::atan2(s.body.linear_velocity[1], s.body.linear_velocity[0]);
             T bearing = course + start_bearing_;
@@ -157,23 +189,36 @@ private:
             command(px4_msgs::msg::VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);  // custom main mode 6: offboard
             start_us_ = now_us();
             t = 0;
+            flight_time_ = 0;
             phase_ = SWITCHING;
             RCLCPP_INFO(get_logger(), "reference placed, switching to offboard");
         }
         bool offboard = status_.nav_state == px4_msgs::msg::VehicleStatus::NAVIGATION_STATE_OFFBOARD;
         if(phase_ == SWITCHING){
-            if(offboard){ phase_ = FLYING; RCLCPP_INFO(get_logger(), "offboard: the policy flies"); }
-            else if(t > 1){ hand_back("PX4 did not switch to offboard"); return; }
+            // no command before PX4 is in offboard: its own controller still drives the same outputs
+            if(!offboard){
+                if(t > 1) hand_back("PX4 did not switch to offboard");
+                return;
+            }
+            phase_ = FLYING;
+            RCLCPP_INFO(get_logger(), "offboard: the policy flies");
         }
         else if(!offboard){ hand_back("PX4 left offboard"); return; }
+        // the loop runs on a PC: a late step means the airplane flew on the previous command meanwhile
+        uint64_t now = now_us();
+        if(last_step_us_ > 0 && now - last_step_us_ > 100000){
+            RCLCPP_WARN(get_logger(), "control step %.0f ms late", (now - last_step_us_) * 1e-3 - 20);
+        }
+        last_step_us_ = now;
         // the reference moves on, as in simulate_task
-        for(int i = 0; i < 3; i++) s.reference_position[i] = reference_position_[i] + reference_velocity_[i] * t;
+        for(int i = 0; i < 3; i++) s.reference_position[i] = reference_position_[i] + reference_velocity_[i] * flight_time_;
         for(int i = 0; i < 3; i++) s.reference_velocity[i] = reference_velocity_[i];
         s.setpoint_altitude = s.reference_position[2];
         for(int h = 0; h < fixed_wing::ACTION_HISTORY; h++) for(int i = 0; i < 4; i++) s.action_history[h][i] = history_[h][i];
         float observation[fixed_wing::policy::INPUT], action[fixed_wing::policy::ACTIONS];
         fixed_wing::observe_actor(p_, s, [&](int k, T v){ observation[k] = float(v); });
         fixed_wing::policy::evaluate(observation, action);
+        if(identify_) override_for_identification(flight_time_, action);
         for(int h = 0; h + 1 < fixed_wing::ACTION_HISTORY; h++) history_[h] = history_[h + 1];
         for(int i = 0; i < 4; i++) history_[fixed_wing::ACTION_HISTORY - 1][i] = action[i];
         // servos 0 and 1: elevons in opposition (aileron), 2: elevator, 3: rudder; +-1 = +-45 deg, as in training
@@ -190,30 +235,33 @@ private:
         motors.control[0] = (action[fixed_wing::THROTTLE] + 1) / 2;  // [-1, 1] -> [0, 1]
         servos_pub_->publish(servos);
         motors_pub_->publish(motors);
-        log_ << t;
+        log_ << flight_time_;
         for(int i = 0; i < 3; i++) log_ << "," << s.body.position[i];
         for(int i = 0; i < 3; i++) log_ << "," << s.body.linear_velocity[i];
         for(int i = 0; i < 4; i++) log_ << "," << s.body.orientation[i];
         for(int i = 0; i < 3; i++) log_ << "," << s.body.angular_velocity[i];
         for(int i = 0; i < 3; i++) log_ << "," << s.reference_position[i];
         for(int i = 0; i < 4; i++) log_ << "," << action[i];
-        log_ << "," << int(status_.nav_state) << "\n";
+        log_ << "," << int(status_.nav_state) << "," << odometry_.timestamp << "\n";
         T e[3], e_velocity[3];
         fixed_wing::tracking_errors(s, e, e_velocity);
         if(s.body.position[2] < min_altitude_) hand_back("below min_altitude");
         else if(fixed_wing::norm3(e) > 300) hand_back("more than 300 m from the point");
-        else if(t > duration_) hand_back("duration reached");
+        else if(flight_time_ > duration_) hand_back("duration reached");
     }
 
     fixed_wing::Parameters<T> p_;
-    T start_altitude_, min_altitude_, start_distance_, start_bearing_, reference_speed_, duration_;
+    T start_altitude_, min_altitude_, start_distance_, start_bearing_, reference_speed_, duration_, max_start_speed_;
+    bool identify_ = false, wait_for_loiter_ = false;
+    uint64_t last_step_us_ = 0;
     std::array<T, 3> reference_position_{}, reference_velocity_{};
     std::array<std::array<T, 4>, fixed_wing::ACTION_HISTORY> history_{};
     px4_msgs::msg::VehicleOdometry odometry_{};
     px4_msgs::msg::VehicleStatus status_{};
     bool have_odometry_ = false, have_status_ = false;
     int heartbeats_ = 0, done_steps_ = 0;
-    uint64_t start_us_ = 0;
+    uint64_t start_us_ = 0, last_px4_us_ = 0;
+    T flight_time_ = 0;
     Phase phase_ = WAITING;
     std::ofstream log_;
     rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr odometry_sub_;

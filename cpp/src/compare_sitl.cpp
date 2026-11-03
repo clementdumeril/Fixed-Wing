@@ -8,6 +8,9 @@
 //      model; prediction minus Gazebo for the acceleration (body frame) and the angular acceleration, mean and RMS.
 //      The surface and throttle positions are not logged: they follow the logged commands with the model's lag, with
 //      0 to 3 control steps of latency (the one with the smallest error is the latency of the chain).
+//      With the columns of an identification flight aligned on Gazebo's joint states (sim_t: Gazebo's time of each
+//      step; measured_aileron, measured_elevator, measured_rudder in rad, measured_throttle), the steps last their
+//      simulated time and a last line uses the measured surface and rotor positions instead of the lag model.
 #include <rl_tools/operations/cpu.h>
 
 #include <fixed_wing/dynamics.h>
@@ -28,6 +31,8 @@ namespace fw = fixed_wing;
 struct Row{
     T t, position[3], velocity[3], q[4], rates[3], reference[3], action[4];
     int nav_state;
+    T sim_t;  // Gazebo's time of the step, t when not logged
+    T measured[4];  // surface and throttle positions measured in Gazebo, NaN when not logged
 };
 
 std::vector<Row> load(const std::string& path){
@@ -49,7 +54,10 @@ std::vector<Row> load(const std::string& path){
         for(const auto& name: names){ std::getline(cells, cell, ','); v[name] = std::stod(cell); }
         Row r{v["t"], {v["x"], v["y"], v["altitude"]}, {v["vx"], v["vy"], v["vz"]}, {v["qw"], v["qx"], v["qy"], v["qz"]},
               {v["p"], v["q"], v["r"]}, {v["reference_x"], v["reference_y"], v["reference_altitude"]},
-              {v["aileron"], v["elevator"], v["rudder"], v["throttle"]}, int(v["nav_state"])};
+              {v["aileron"], v["elevator"], v["rudder"], v["throttle"]}, int(v["nav_state"]),
+              v.count("sim_t") ? v["sim_t"] : v["t"], {NAN, NAN, NAN, NAN}};
+        const char* measured[4] = {"measured_aileron", "measured_elevator", "measured_rudder", "measured_throttle"};
+        for(int i = 0; i < 4; i++) if(v.count(measured[i])) r.measured[i] = v[measured[i]];
         rows.push_back(r);
     }
     return rows;
@@ -143,16 +151,19 @@ int main(int argc, char** argv){
     std::printf("\nstep by step, prediction - Gazebo (mean +- RMS), body frame x forward, y left, z up\n");
     std::ofstream residuals("residuals.csv");
     residuals << "t,airspeed,alpha,beta,p,q,r,aileron,elevator,rudder,throttle,ax,ay,az,wx,wy,wz\n";
-    for(int latency = 0; latency <= 3; latency++){
+    bool measured = !std::isnan(rows.front().measured[0]);
+    for(int latency = 0; latency <= (measured ? 4 : 3); latency++){
+        bool use_measured = latency == 4;  // the last pass: measured positions, no lag model
         T actuators[fw::N_ACTUATORS];
         T commanded[fw::N_ACTUATORS];
         fw::scale_action(p, trim_throttle, actuators);
         std::array<double, 6> mean{}, square{};
         int n = 0;
         for(size_t k = 0; k + 1 < rows.size(); k++){
-            T dt = rows[k + 1].t - rows[k].t;
+            T dt = rows[k + 1].sim_t - rows[k].sim_t;
             // a stalled node (several steps without a command) or an odometry that was not updated: no comparison
-            bool usable = dt > T(0.005) && dt < T(0.05) && rows[k + 1].velocity[0] != rows[k].velocity[0];
+            bool usable = dt > T(0.002) && dt < T(0.05) && rows[k + 1].t - rows[k].t < T(0.05)
+                          && rows[k + 1].velocity[0] != rows[k].velocity[0];
             if(!usable){
                 fw::scale_action(p, rows[k].action, actuators);
                 continue;
@@ -161,6 +172,10 @@ int main(int argc, char** argv){
             fw::scale_action(p, source.action, commanded);
             fw::Body<T> x = body_of(rows[k]), y;
             for(int i = 0; i < fw::N_ACTUATORS; i++) x.actuators[i] = actuators[i];
+            if(use_measured){
+                // held over the step: the measured position at k (the lag acts within the step)
+                for(int i = 0; i < fw::N_ACTUATORS; i++) x.actuators[i] = commanded[i] = rows[k].measured[i];
+            }
             fw::rk4(p, x, commanded, dt, y);
             for(int i = 0; i < fw::N_ACTUATORS; i++) actuators[i] = fw::clip(y.actuators[i], p.actuator_limits[i][0], p.actuator_limits[i][1]);
             if(rows[k].t - t0 < 5) continue;  // the hand-over: unknown surface positions
@@ -173,7 +188,7 @@ int main(int argc, char** argv){
                 double e[2] = {dv_body[i] / dt, (y.angular_velocity[i] - rows[k + 1].rates[i]) / dt};
                 for(int j = 0; j < 2; j++){ mean[i + 3 * j] += e[j]; square[i + 3 * j] += e[j] * e[j]; }
             }
-            if(latency == 1){
+            if(latency == (measured ? 4 : 1)){
                 fw::AirData<T> air = fw::air_data(p, x);
                 residuals << rows[k].t - t0 << "," << air.airspeed << "," << air.alpha << "," << air.beta;
                 for(int i = 0; i < 3; i++) residuals << "," << x.angular_velocity[i];
@@ -184,8 +199,10 @@ int main(int argc, char** argv){
             }
             n++;
         }
-        std::printf("latency %d step(s): accel x %+.2f+-%.2f y %+.2f+-%.2f z %+.2f+-%.2f m/s2 | angular accel x %+.2f+-%.2f y %+.2f+-%.2f z %+.2f+-%.2f rad/s2\n",
-                    latency, mean[0] / n, std::sqrt(square[0] / n), mean[1] / n, std::sqrt(square[1] / n), mean[2] / n, std::sqrt(square[2] / n),
+        if(use_measured) std::printf("measured surfaces:");
+        else std::printf("latency %d step(s):", latency);
+        std::printf(" accel x %+.2f+-%.2f y %+.2f+-%.2f z %+.2f+-%.2f m/s2 | angular accel x %+.2f+-%.2f y %+.2f+-%.2f z %+.2f+-%.2f rad/s2\n",
+                    mean[0] / n, std::sqrt(square[0] / n), mean[1] / n, std::sqrt(square[1] / n), mean[2] / n, std::sqrt(square[2] / n),
                     mean[3] / n, std::sqrt(square[3] / n), mean[4] / n, std::sqrt(square[4] / n), mean[5] / n, std::sqrt(square[5] / n));
     }
     return 0;
