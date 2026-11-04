@@ -1,7 +1,7 @@
 #!/bin/bash
 # Does a margin to the stall in the reward remove the early stalls? Critic 256 x batch 64, 1 M steps in calm air,
 # weight of the angle-of-attack margin term 0 (reference), 0.3 and 1, 3 seeds each, one core each.
-# Submit from Fixed-Wing/cpp after savio/build.slurm: sbatch savio/alpha_margin.slurm
+# Submit from Fixed-Wing/cpp after slurm/build.slurm: sbatch slurm/alpha_margin.slurm
 #SBATCH --job-name=fw-cpp-alpha
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

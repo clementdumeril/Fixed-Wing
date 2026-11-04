@@ -2,7 +2,7 @@
 # The reference setup on more seeds: random non-stall start, no trim term in the reward, critic 256 x batch 64,
 # 1 M steps in calm air, 10 seeds, one core each. Each run also writes the trained actor (actor.h) and the first 10
 # test flights of each test set (flights.csv, flights_random.csv), for plots.
-# Submit from Fixed-Wing/cpp after savio/build.slurm: sbatch savio/random_start.slurm
+# Submit from Fixed-Wing/cpp after slurm/build.slurm: sbatch slurm/random_start.slurm
 #SBATCH --job-name=fw-cpp-random
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

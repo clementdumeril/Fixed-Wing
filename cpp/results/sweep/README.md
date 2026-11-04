@@ -1,8 +1,8 @@
-# Network and batch size sweep in C++ (Savio jobs 40480186 and 40498924, 24-25 October 2026)
+# Network and batch size sweep in C++ (Slurm jobs 40480186 and 40498924, 24-25 October 2026)
 
 SAC from RLtools on the C++ port, calm air, nominal airplane, same reward, curriculum gate and actor (64-64) as the
-Python runs; only the critic hidden size and the batch size change. 1 M steps, 3 seeds each, one core of a Savio
-`savio4_htc` node with Intel MKL, evaluated on the 100 test scenarios of the Python environment.
+Python runs; only the critic hidden size and the batch size change. 1 M steps, 3 seeds each, one core of a
+cluster node with Intel MKL, evaluated on the 100 test scenarios of the Python environment.
 
 | Critic, batch | Time (1 core) | Curriculum stage | Complete flights | Mean return | Airspeed RMS | Altitude RMS | Course RMS | Command change |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -44,5 +44,5 @@ steady offsets, jittery commands in wind), which the 256 runs now let me test in
 
 ## Files
 
-`<variant>_seed<k>/`: `progress.csv` and `evaluation.json` of each run, from `savio/sweep.slurm` and, for the 3 M-step
-runs, `sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000`.
+`<variant>_seed<k>/`: `progress.csv` and `evaluation.json` of each run, from `slurm/sweep.slurm` and, for the 3 M-step
+runs, `sbatch --array=0-2 slurm/train.slurm train_sac_c128_b64 3000000`.

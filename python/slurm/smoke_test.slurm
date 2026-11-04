@@ -1,8 +1,8 @@
 #!/bin/bash
-# Short run to check the installation on Savio: 20 000 steps, 5 test scenarios, a few minutes.
+# Short run to check the installation on the cluster: 20 000 steps, 5 test scenarios, a few minutes.
 #SBATCH --job-name=fw-sac-smoke
 #SBATCH --account=ic_piml
-#SBATCH --partition=savio4_htc        # billed per core (savio3 bills whole nodes)
+#SBATCH --partition=savio4_htc
 #SBATCH --qos=savio_debug
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

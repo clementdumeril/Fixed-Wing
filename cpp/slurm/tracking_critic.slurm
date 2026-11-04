@@ -4,7 +4,7 @@
 # 20 m, linear distance cost 0.3, velocity cost toward the point with gain 0.1, margin to the stall with weight 1.
 # Almost all the training time is in the network updates, most of it in the 256 x 256 layer of the critic.
 # Submit from Fixed-Wing/cpp with the train_sac_c{256,128,64}_b64_tracking_g995 targets built:
-# sbatch savio/tracking_critic.slurm
+# sbatch slurm/tracking_critic.slurm
 #SBATCH --job-name=fw-cpp-critic
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

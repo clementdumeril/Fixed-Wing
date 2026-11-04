@@ -1,6 +1,6 @@
 #!/bin/bash
 # Network and batch size sweep: 6 variants x 3 seeds, one core each, 1 M steps in calm air, then the evaluation on the
-# 100 test scenarios. Submit from Fixed-Wing/cpp after savio/build.slurm: sbatch savio/sweep.slurm
+# 100 test scenarios. Submit from Fixed-Wing/cpp after slurm/build.slurm: sbatch slurm/sweep.slurm
 #SBATCH --job-name=fw-cpp-sweep
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

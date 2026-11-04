@@ -21,7 +21,7 @@ velocity. Gusts, turbulence, thermals and sensor noise are not ported yet.
 trim, and a full nose-up flight that stalls), replays the same commands from the same starts in C++ (`src/check.cpp`)
 and compares every step: 11 flights, 7136 steps, states within 7e-13, rewards within 8e-15, the same terminations, and
 observations within 1.2e-7 (Python stores them as float32). First trainings: [`results/`](results/README.md); network
-and batch size sweep on Savio: [`results/sweep`](results/sweep/README.md). Batch 256 on the advanced_plane: [`results/batch_px4plane`](results/batch_px4plane/README.md). The best calm-air policy so far comes from
+and batch size sweep on a Slurm cluster: [`results/sweep`](results/sweep/README.md). Batch 256 on the advanced_plane: [`results/batch_px4plane`](results/batch_px4plane/README.md). The best calm-air policy so far comes from
 `train_sac` (critic 256, batch 256); `train_sac_c256_b64` is half the cost for a small loss.
 
 ## Build and run
@@ -78,29 +78,29 @@ about 60 steps/s with the Python network sizes and 600 steps/s with the L2F ones
 batch 64). On Windows, `pip install mkl-devel` and `-DMKL_DIR=<venv>/Library/lib/cmake/mkl -DMKL_THREADING=sequential`
 work.
 
-## On Savio
+## On a Slurm cluster
 
-From `Fixed-Wing/cpp`, with the Python venv of [`python/savio`](../python/savio/README.md):
+From `Fixed-Wing/cpp`, with the Python venv of [`python/slurm`](../python/slurm/README.md):
 
 ```bash
-source savio/setup.sh          # login node: modules, Intel MKL in the venv, configure (downloads RLtools)
-sbatch savio/build.slurm       # compute node: compile, export the test scenarios, check against Python
-sbatch savio/sweep.slurm       # 6 critic x batch sizes x 3 seeds, one core each, 1 M steps in calm air
-sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000   # one variant, 3 seeds, any number of steps
-sbatch savio/alpha_margin.slurm   # critic 256 x batch 64 with a margin to the stall in the reward, weights 0, 0.3, 1
-sbatch savio/random_start.slurm   # random start, no trim term, 10 seeds, with the actors and test flights saved
-sbatch savio/tracking.slurm       # position and velocity tracking, 3 reward settings x 3 seeds
-sbatch savio/tracking_gamma.slurm # the same task with a discount factor of 0.995 and 0.998, 3 seeds each
-sbatch --export=ALL,STEPS=3000000 savio/tracking_gamma.slurm   # the same with 3 M steps
-sbatch savio/tracking_guidance.slurm  # gamma 0.995, velocity cost toward the point, gains 0.1 and 0.2 /s
-sbatch savio/tracking_seeds.slurm     # the two best settings (gain 0 and 0.1) on 10 seeds each
-sbatch savio/tracking_ahead.slurm     # gain 0.1 with the point starting within 45 deg ahead, 10 seeds
-sbatch savio/tracking_alpha.slurm     # gain 0.1 with a margin to the stall, weights 0.3 and 1, 10 seeds each
-sbatch savio/tracking_integral.slurm  # gain 0.1, margin weight 1, with the integral of the position error, 10 seeds
-sbatch savio/tracking_critic.slurm    # critics of 256, 128 and 64, 400k steps, curriculum check every 40k, 10 seeds
-sbatch savio/profile.slurm            # time of each part of a training step for the three critics
-sbatch savio/tracking_px4plane.slurm  # tracking on PX4's advanced_plane, critic 128, 400k steps, 10 seeds
-sbatch savio/tracking_px4plane_long.slurm  # the same for 3M steps, keeping the best checkpoint, 10 seeds
+source slurm/setup.sh          # login node: modules, Intel MKL in the venv, configure (downloads RLtools)
+sbatch slurm/build.slurm       # compute node: compile, export the test scenarios, check against Python
+sbatch slurm/sweep.slurm       # 6 critic x batch sizes x 3 seeds, one core each, 1 M steps in calm air
+sbatch --array=0-2 slurm/train.slurm train_sac_c128_b64 3000000   # one variant, 3 seeds, any number of steps
+sbatch slurm/alpha_margin.slurm   # critic 256 x batch 64 with a margin to the stall in the reward, weights 0, 0.3, 1
+sbatch slurm/random_start.slurm   # random start, no trim term, 10 seeds, with the actors and test flights saved
+sbatch slurm/tracking.slurm       # position and velocity tracking, 3 reward settings x 3 seeds
+sbatch slurm/tracking_gamma.slurm # the same task with a discount factor of 0.995 and 0.998, 3 seeds each
+sbatch --export=ALL,STEPS=3000000 slurm/tracking_gamma.slurm   # the same with 3 M steps
+sbatch slurm/tracking_guidance.slurm  # gamma 0.995, velocity cost toward the point, gains 0.1 and 0.2 /s
+sbatch slurm/tracking_seeds.slurm     # the two best settings (gain 0 and 0.1) on 10 seeds each
+sbatch slurm/tracking_ahead.slurm     # gain 0.1 with the point starting within 45 deg ahead, 10 seeds
+sbatch slurm/tracking_alpha.slurm     # gain 0.1 with a margin to the stall, weights 0.3 and 1, 10 seeds each
+sbatch slurm/tracking_integral.slurm  # gain 0.1, margin weight 1, with the integral of the position error, 10 seeds
+sbatch slurm/tracking_critic.slurm    # critics of 256, 128 and 64, 400k steps, curriculum check every 40k, 10 seeds
+sbatch slurm/profile.slurm            # time of each part of a training step for the three critics
+sbatch slurm/tracking_px4plane.slurm  # tracking on PX4's advanced_plane, critic 128, 400k steps, 10 seeds
+sbatch slurm/tracking_px4plane_long.slurm  # the same for 3M steps, keeping the best checkpoint, 10 seeds
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
@@ -141,7 +141,7 @@ then compares the two models without PX4's state estimate. On the first identifi
 their command with 0.1 s of lag as modelled, and the step-by-step residuals have no bias (accelerations within
 0.2 m/s² and 0.2 rad/s²): the residual biases measured from PX4's odometry came from its estimate and timing.
 
-The policy in `policy_weights.h` is seed 9 of the 400k-step critic-128 runs on this airplane (`tracking_px4plane`,
-Savio): in its SITL flight it followed the point at 20 m RMSE over the last 30 s, and this simulator flies the same
+The policy in `policy_weights.h` is seed 9 of the 400k-step critic-128 runs on this airplane (`tracking_px4plane`):
+in its SITL flight it followed the point at 20 m RMSE over the last 30 s, and this simulator flies the same
 flight at 20 m, 6 m below the point in both. Seed 3, the first policy flown, followed it at 15 m in Gazebo but 9 m in
 this simulator: its commands changed 10 times more from step to step, and amplified the noise of PX4's estimate.

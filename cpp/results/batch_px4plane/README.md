@@ -1,7 +1,7 @@
 # Batch 256 on PX4's advanced_plane (lab PC, 3 November 2026)
 
 Tracking task on the advanced_plane (`train_sac_c*_b*_tracking_g995_px4plane`), the setting of
-`savio/tracking_px4plane.slurm`: 400k steps, a curriculum check every 40k, networks updated at every step. Only the
+`slurm/tracking_px4plane.slurm`: 400k steps, a curriculum check every 40k, networks updated at every step. Only the
 critic hidden size and the batch size change; seeds 0 to 3 on the same PC for every variant. The batch 256 runs also
 kept their best checkpoint on 100 validation flights every 50k steps (`--checkpoint-interval 50000`). Test A: 100
 normal flights, B: 100 random starts, ahead: B with the point within 45° ahead; errors over the second half of the
@@ -28,6 +28,6 @@ Mean over the 4 seeds.
 - **The critic of Learning to Fly in Seconds (64) is too small for this task**, even with its batch of 256.
 - **Not at equal compute.** A batch of 256 costs about 4 times as much per update, and the 8 runs shared the PC's
   8 threads where the batch-64 ones ran 4 at once. The comparison at equal compute is against batch 64 for about
-  1.6M steps: `savio/tracking_px4plane_long.slurm` records the same validation score every 50k steps up to 3M.
-- 4 seeds per variant, with a spread of 51 to 100 % between seeds at batch 64 (10 Savio seeds): a strong trend, to
+  1.6M steps: `slurm/tracking_px4plane_long.slurm` records the same validation score every 50k steps up to 3M.
+- 4 seeds per variant, with a spread of 51 to 100 % between seeds at batch 64 (10 seeds): a strong trend, to
   be confirmed on 10 seeds.

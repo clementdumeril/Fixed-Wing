@@ -1,10 +1,10 @@
 #!/bin/bash
 # Tracking task with a longer critic horizon: discount factor 0.995 (about 4 s) and 0.998 (about 10 s), 3 seeds each,
-# with the best reward setting of savio/tracking.slurm (position cost scale 20 m, linear distance cost 0.3). The 0.99
+# with the best reward setting of slurm/tracking.slurm (position cost scale 20 m, linear distance cost 0.3). The 0.99
 # reference is the tracking_s20_l0.3 runs of that script: same seeds, same machine type.
 # Submit from Fixed-Wing/cpp after the train_sac_c256_b64_tracking_g995 and _g998 targets are built:
-# sbatch savio/tracking_gamma.slurm                               1 M steps
-# sbatch --export=ALL,STEPS=3000000 savio/tracking_gamma.slurm    any number of steps (about 1 h per million)
+# sbatch slurm/tracking_gamma.slurm                               1 M steps
+# sbatch --export=ALL,STEPS=3000000 slurm/tracking_gamma.slurm    any number of steps (about 1 h per million)
 #SBATCH --job-name=fw-cpp-gamma
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

@@ -2,9 +2,9 @@
 # The best tracking setting with the point starting ahead of the airplane: within 45 deg of its course instead of
 # anywhere around it (half the default starts put the point behind, which takes steep turns to reach; the early stalls
 # are the same on tests A and B, so they come from the point, not from the airplane's attitude). 10 seeds, to compare
-# with the gain 0.1 runs of savio/tracking_seeds.slurm on tests A, B and the new evaluation_ahead.json.
+# with the gain 0.1 runs of slurm/tracking_seeds.slurm on tests A, B and the new evaluation_ahead.json.
 # Submit from Fixed-Wing/cpp after rebuilding the train_sac_c256_b64_tracking_g995 target:
-# sbatch savio/tracking_ahead.slurm
+# sbatch slurm/tracking_ahead.slurm
 #SBATCH --job-name=fw-cpp-ahead
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

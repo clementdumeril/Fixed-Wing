@@ -1,10 +1,10 @@
 #!/bin/bash
 # Tracking with a margin to the stall in the reward, outside the cap: weights 0.3 and 1, 10 seeds each, on the best
 # setting so far (discount factor 0.995, position cost scale 20 m, linear distance cost 0.3, velocity cost toward the
-# point with gain 0.1). With gain 0.1 and no margin (savio/tracking_seeds.slurm), most failures were stalls in the
+# point with gain 0.1). With gain 0.1 and no margin (slurm/tracking_seeds.slurm), most failures were stalls in the
 # first second, the policy pulling up to 15 deg of angle of attack; the margin costs within 4 deg of that limit.
 # Submit from Fixed-Wing/cpp with the train_sac_c256_b64_tracking_g995 target built:
-# sbatch savio/tracking_alpha.slurm
+# sbatch slurm/tracking_alpha.slurm
 #SBATCH --job-name=fw-cpp-alpha
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

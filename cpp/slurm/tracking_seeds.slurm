@@ -1,10 +1,10 @@
 #!/bin/bash
 # The two best tracking settings on 10 seeds each, to tell them apart (3 seeds spread from 39 to 97% of completed
 # flights): discount factor 0.995, position cost scale 20 m, linear distance cost 0.3, without the velocity cost toward
-# the point (gain 0) and with it (gain 0.1). Seeds 0 to 2 repeat the runs of savio/tracking_gamma.slurm and
-# savio/tracking_guidance.slurm: on the same machine type they must give the same results.
+# the point (gain 0) and with it (gain 0.1). Seeds 0 to 2 repeat the runs of slurm/tracking_gamma.slurm and
+# slurm/tracking_guidance.slurm: on the same machine type they must give the same results.
 # Submit from Fixed-Wing/cpp with the train_sac_c256_b64_tracking_g995 target built:
-# sbatch savio/tracking_seeds.slurm
+# sbatch slurm/tracking_seeds.slurm
 #SBATCH --job-name=fw-cpp-seeds
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

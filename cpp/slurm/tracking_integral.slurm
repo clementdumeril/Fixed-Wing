@@ -1,10 +1,10 @@
 #!/bin/bash
 # Tracking with the integral of the position error in the observation (forgetting time 10 s), 10 seeds, on the best
 # setting so far: discount factor 0.995, position cost scale 20 m, linear distance cost 0.3, velocity cost toward the
-# point with gain 0.1, margin to the stall with weight 1 (savio/tracking_alpha.slurm, the same runs without the
+# point with gain 0.1, margin to the stall with weight 1 (slurm/tracking_alpha.slurm, the same runs without the
 # integral). Without it, each seed kept its own steady offset to the point, mostly in altitude (-18 to +24 m).
 # Submit from Fixed-Wing/cpp with the train_sac_c256_b64_tracking_g995_integral target built:
-# sbatch savio/tracking_integral.slurm
+# sbatch slurm/tracking_integral.slurm
 #SBATCH --job-name=fw-cpp-integral
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

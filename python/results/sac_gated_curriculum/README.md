@@ -1,6 +1,6 @@
-# Far-field reward and gated curriculum (Savio jobs 40384633 and 40384634, 3 seeds each)
+# Far-field reward and gated curriculum (Slurm jobs 40384633 and 40384634, 3 seeds each)
 
-SAC + MLP (actor 64-64, critics 256-256), asymmetric actor-critic, 1 000 000 steps per seed on 8 cores of Savio
+SAC + MLP (actor 64-64, critics 256-256), asymmetric actor-critic, 1 000 000 steps per seed on 8 cores of a Slurm cluster
 (3.4 to 4.2 h). Reward with sideslip, distance-to-trim and far-field terms; the L2F curriculum advances a stage only
 when the mean course error over the last 100 000 steps is below 15°. Aerosonde placeholder, nominal airplane.
 
