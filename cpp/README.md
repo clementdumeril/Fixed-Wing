@@ -21,7 +21,7 @@ velocity. Gusts, turbulence, thermals and sensor noise are not ported yet.
 trim, and a full nose-up flight that stalls), replays the same commands from the same starts in C++ (`src/check.cpp`)
 and compares every step: 11 flights, 7136 steps, states within 7e-13, rewards within 8e-15, the same terminations, and
 observations within 1.2e-7 (Python stores them as float32). First trainings: [`results/`](results/README.md); network
-and batch size sweep on a Slurm cluster: [`results/sweep`](results/sweep/README.md). The best calm-air policy so far comes from
+and batch size sweep on a Slurm cluster: [`results/sweep`](results/sweep/README.md). Batch 256 on the advanced_plane: [`results/batch_px4plane`](results/batch_px4plane/README.md). The best calm-air policy so far comes from
 `train_sac` (critic 256, batch 256); `train_sac_c256_b64` is half the cost for a small loss.
 
 ## Build and run
