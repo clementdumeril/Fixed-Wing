@@ -30,7 +30,7 @@ python -m venv ~/.venvs/fixed-wing
 
 ## Visualizer
 
-Uses the rl-tools [ui-server](https://github.com/rl-tools/ui-server) with the same protocol as L2F.
+Uses the rl-tools [ui-server](https://pypi.org/project/ui-server/) with the same protocol as L2F.
 
 ```bash
 ~/.venvs/fixed-wing/Scripts/python -m pip install -e ".[ui]"

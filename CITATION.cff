@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Fixed-Wing: a fixed-wing UAV simulator and a low-level SAC flight controller"
+authors:
+  - family-names: Dumeril
+    given-names: Clément
+    affiliation: "University of California, Berkeley"
+license: MIT
+repository-code: "https://github.com/clementdumeril/Fixed-Wing"
+url: "https://clement.dumeril.net"
+keywords:
+  - fixed-wing UAV
+  - reinforcement learning
+  - soft actor-critic
+  - flight dynamics
+  - RLtools
+  - PX4
