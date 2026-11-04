@@ -104,6 +104,7 @@ sbatch slurm/tracking_px4plane.slurm  # tracking on PX4's advanced_plane, critic
 sbatch slurm/tracking_px4plane_long.slurm  # the same for 3M steps, keeping the best checkpoint, 10 seeds
 sbatch slurm/tracking_px4plane_batch.slurm # batch 256: updates at every step, and with the L2F intervals for 400k and 4M steps, 10 seeds each
 sbatch slurm/tracking_px4plane_l2f.slurm   # L2F intervals and batch, 4M steps: SAC critic 64, TD3, and SAC critic 128 as reference, 10 seeds each
+sbatch slurm/tracking_px4plane_td3_smooth.slurm # TD3 with 10x the command-change cost, half the exploration noise, and both, 10 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.

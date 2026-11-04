@@ -150,6 +150,14 @@ foreach(algorithm sac td3)
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
+# TD3 as above with half the exploration noise (0.05 instead of 0.1): its policies switched the surfaces between their
+# limits at about the control rate (results/l2f_td3_px4plane)
+add_executable(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 src/train_sac.cpp)
+target_include_directories(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 PRIVATE include)
+target_link_libraries(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 PRIVATE RLtools::RLtools)
+target_compile_definitions(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 PRIVATE FW_CRITIC_HIDDEN=64 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2 FW_TD3=1 FW_EXPLORATION_NOISE=0.05)
+list(APPEND TRAIN_TARGETS train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005)
+
 # a flight of the deployed policy in Gazebo (deploy/ros2/fly_sitl.sh) against this simulator
 add_executable(compare_sitl src/compare_sitl.cpp)
 target_include_directories(compare_sitl PRIVATE include deploy/ros2/fw_policy/policy)

@@ -26,6 +26,7 @@
 //   test flights) and keep the best one: best_actor.h, its tests in evaluation_best*.json and checkpoints.csv. The
 //   score is the RMS error of the completed flights (position, or course for the course task) + 10 per % of failed
 //   flights. The validation flights have their own random numbers, so training is the same as without the option
+//   --action-change-scale K: K times the weight of the command-change cost at every curriculum stage (default 1)
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
 // critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
@@ -123,6 +124,9 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #define FW_ACTOR_INTERVAL_FACTOR 1
 #endif
 
+#ifndef FW_EXPLORATION_NOISE
+#define FW_EXPLORATION_NOISE 0.1  // TD3: std of the Gaussian exploration noise on the normalized actions (RLtools default)
+#endif
 #if FW_TD3
 // TD3 with the settings of the L2F paper (learning-to-fly src/config/config.h): critic targets updated with the critics,
 // actor target with the actor, target-action noise 0.2 clipped at 0.5; exploration noise 0.1 (RLtools default). The
@@ -152,7 +156,7 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::td3::loop::core::DefaultParame
     static constexpr TI CRITIC_NUM_LAYERS = 3;
     static constexpr auto ACTOR_ACTIVATION_FUNCTION = rlt::nn::activation_functions::ActivationFunction::RELU;
     static constexpr auto CRITIC_ACTIVATION_FUNCTION = rlt::nn::activation_functions::ActivationFunction::RELU;
-    static constexpr T EXPLORATION_NOISE = 0.1;
+    static constexpr T EXPLORATION_NOISE = FW_EXPLORATION_NOISE;
     struct OPTIMIZER_PARAMETERS: rlt::nn::optimizers::adam::DEFAULT_PARAMETERS_TENSORFLOW<TYPE_POLICY>{
         static constexpr T ALPHA = 3e-4;
     };
@@ -563,7 +567,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -583,6 +587,7 @@ int run(int argc, char** argv){
     int fixed_stage = -1;  // >= 0: no curriculum, the reward weights of that stage from the start
     TI curriculum_period = Curriculum{}.period;
     TI checkpoint_interval = 0;  // 0: no validation flights, only the final actor
+    T_ENV action_change_scale = 1;  // times the weight of the command-change cost, at every curriculum stage
     bool profile = false;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
@@ -596,6 +601,7 @@ int run(int argc, char** argv){
         else if(option == "--curriculum-stage" && i + 1 < argc) fixed_stage = std::stoi(argv[++i]);
         else if(option == "--curriculum-period" && i + 1 < argc) curriculum_period = std::stoul(argv[++i]);
         else if(option == "--checkpoint-interval" && i + 1 < argc) checkpoint_interval = std::stoul(argv[++i]);
+        else if(option == "--action-change-scale" && i + 1 < argc) action_change_scale = std::stod(argv[++i]);
         else if(option == "--no-trim-reward") trim_reward = false;
         else if(option == "--profile") profile = true;
         else throw std::runtime_error("unknown option " + option);
@@ -625,6 +631,8 @@ int run(int argc, char** argv){
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
         << ",\n  \"actor_training_interval\": " << FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR
+        << ",\n  \"action_change_scale\": " << action_change_scale
+        << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
         << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
 
@@ -637,6 +645,8 @@ int run(int argc, char** argv){
     curriculum.period = curriculum_period;
     curriculum.initial.alpha_margin_weight = alpha_weight;  // constant: not part of the curriculum
     curriculum.target.alpha_margin_weight = alpha_weight;
+    curriculum.initial.action_change_weight *= action_change_scale;
+    curriculum.target.action_change_weight *= action_change_scale;
     curriculum.initial.huber_delta = huber_delta;
     curriculum.target.huber_delta = huber_delta;
     for(auto* c: {&curriculum.initial, &curriculum.target}){  // tracking task: constant over the curriculum
