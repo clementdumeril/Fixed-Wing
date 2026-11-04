@@ -144,6 +144,33 @@ def compare(sets, key, out, ylabel, title, xmax):
     plt.close(fig)
 
 
+def compare_time(sets, out):
+    """validation flights (every 50 k steps) against the mean wall-clock time at which each was flown; the time
+    includes the validation flights themselves"""
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12, 4.4))
+    for (name, runs), color in zip(sets, (TEAL, "#E8A33D", "#4C6EB1", "#9B59B6")):
+        steps, success, position = checkpoints(runs)
+        p_steps, _, seconds = progress(runs, "rollout/ep_len_mean")
+        minutes = np.interp(steps, p_steps, seconds) / 60
+        position = np.where(np.isfinite(position), position, np.nan)
+        for ax, v in ((a, success), (b, position)):
+            m, s = np.nanmean(v, 0), np.nanstd(v, 0)
+            ax.fill_between(minutes, m - s, np.minimum(m + s, 100) if ax is a else m + s, color=color, alpha=0.2, lw=0)
+            ax.plot(minutes, m, color=color, lw=2.5, label=f"{name} ({len(runs)} seeds)")
+    a.set_ylim(0, 102)
+    a.set_ylabel("Validation flights completed [%]")
+    b.set_ylim(0, 80)
+    b.set_ylabel("Position RMSE [m]")
+    for ax in (a, b):
+        ax.set_xlabel("Wall-clock time, one Savio core [min]")
+        ax.set_xlim(0, None)
+    a.legend(loc="lower right", frameon=False, fontsize=10)
+    fig.suptitle("100 validation flights every 50k steps, against the training time", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+
+
 def colored_path(ax, x, y, c, vmax):
     from matplotlib.collections import LineCollection
     points = np.c_[x, y].reshape(-1, 1, 2)
@@ -222,6 +249,8 @@ def main():
     p.add_argument("--name", default="")
     p.add_argument("--compare", nargs="*", default=[], help="name=glob, curves against the steps")
     p.add_argument("--compare-xmax", type=float, default=4e5)
+    p.add_argument("--compare-time", nargs="*", default=[],
+                   help="name=glob, validation flights against the wall-clock time (runs with checkpoints.csv)")
     p.add_argument("--flights")
     p.add_argument("--flights-label", default="best checkpoint")
     p.add_argument("--scenarios", default="0,1,2,3,4")
@@ -245,6 +274,9 @@ def main():
                 "Episode length against the steps", a.compare_xmax)
         compare(sets, "train/position_error_m", out / "compare_position_error.png", "Position error in training [m]",
                 "Position error against the steps", a.compare_xmax)
+    if a.compare_time:
+        sets = [(s.split("=", 1)[0], sorted(glob.glob(s.split("=", 1)[1]))) for s in a.compare_time]
+        compare_time(sets, out / "compare_time.png")
     if a.flights:
         flights(a.flights, a.sitl, out / "test_flights.png", [int(s) for s in a.scenarios.split(",")], a.flights_label)
     print("wrote", sorted(p.name for p in out.glob("*.png")))
