@@ -136,6 +136,20 @@ target_link_libraries(train_sac_c128_b256_tracking_g995_px4plane_i10a20 PRIVATE 
 target_compile_definitions(train_sac_c128_b256_tracking_g995_px4plane_i10a20 PRIVATE FW_CRITIC_HIDDEN=128 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2)
 list(APPEND TRAIN_TARGETS train_sac_c128_b256_tracking_g995_px4plane_i10a20)
 
+# the last two differences with the L2F paper, with its update intervals and batch: the critic of 64 (SAC), and TD3
+# (its critic of 64 too, see src/train_sac.cpp)
+foreach(algorithm sac td3)
+    set(target train_${algorithm}_c64_b256_tracking_g995_px4plane_i10a20)
+    add_executable(${target} src/train_sac.cpp)
+    target_include_directories(${target} PRIVATE include)
+    target_link_libraries(${target} PRIVATE RLtools::RLtools)
+    target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=64 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2)
+    if(algorithm STREQUAL "td3")
+        target_compile_definitions(${target} PRIVATE FW_TD3=1)
+    endif()
+    list(APPEND TRAIN_TARGETS ${target})
+endforeach()
+
 # a flight of the deployed policy in Gazebo (deploy/ros2/fly_sitl.sh) against this simulator
 add_executable(compare_sitl src/compare_sitl.cpp)
 target_include_directories(compare_sitl PRIVATE include deploy/ros2/fw_policy/policy)

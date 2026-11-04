@@ -28,7 +28,8 @@
 //   flights. The validation flights have their own random numbers, so training is the same as without the option
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
-// critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR)
+// critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
+// train with TD3 instead of SAC (FW_TD3), the algorithm of the L2F paper
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -39,13 +40,24 @@
 #include <rl_tools/nn/optimizers/adam/instance/operations_generic.h>
 #include <rl_tools/nn/operations_cpu_mux.h>
 #include <rl_tools/nn/layers/sample_and_squash/operations_generic.h>
+#include <rl_tools/nn/layers/td3_sampling/operations_generic.h>  // TD3 actor output (FW_TD3), before the sequential model
 #include <rl_tools/nn_models/mlp/operations_generic.h>
 #include <rl_tools/nn_models/random_uniform/operations_generic.h>
 #include <rl_tools/nn_models/sequential/operations_generic.h>
 #include <rl_tools/nn/optimizers/adam/operations_generic.h>
 
+// TD3 instead of SAC (FW_TD3=1), as the L2F paper: the train_td3_* targets
+#ifndef FW_TD3
+#define FW_TD3 0
+#endif
+#if FW_TD3
+#include <rl_tools/rl/algorithms/td3/loop/core/config.h>
+#include <rl_tools/rl/algorithms/td3/loop/core/operations_generic.h>
+#include <rl_tools/nn/layers/td3_sampling/persist_code.h>
+#else
 #include <rl_tools/rl/algorithms/sac/loop/core/config.h>
 #include <rl_tools/rl/algorithms/sac/loop/core/operations_generic.h>
+#endif
 
 // export of the trained actor as C++ code (weights included), the checkpoint format of L2F
 #include <rl_tools/numeric_types/persist_code.h>
@@ -111,6 +123,43 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #define FW_ACTOR_INTERVAL_FACTOR 1
 #endif
 
+#if FW_TD3
+// TD3 with the settings of the L2F paper (learning-to-fly src/config/config.h): critic targets updated with the critics,
+// actor target with the actor, target-action noise 0.2 clipped at 0.5; exploration noise 0.1 (RLtools default). The
+// rest as the SAC runs (learning rate, warmup, replay buffer). The MLP critic of RLtools' TD3 takes the actor's sizes
+// (td3/loop/core/approximators_mlp.h): the critics are 64 x 64, as in L2F, whatever FW_CRITIC_HIDDEN says
+struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::td3::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
+    struct TD3_PARAMETERS: rlt::rl::algorithms::td3::DefaultParameters<TYPE_POLICY, TI>{
+        static constexpr T GAMMA = FW_GAMMA;
+        static constexpr TI ACTOR_BATCH_SIZE = FW_BATCH;
+        static constexpr TI CRITIC_BATCH_SIZE = FW_BATCH;
+        static constexpr TI CRITIC_TRAINING_INTERVAL = FW_TRAINING_INTERVAL;
+        static constexpr TI ACTOR_TRAINING_INTERVAL = FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR;
+        static constexpr TI CRITIC_TARGET_UPDATE_INTERVAL = FW_TRAINING_INTERVAL;
+        static constexpr TI ACTOR_TARGET_UPDATE_INTERVAL = FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR;
+        static constexpr T TARGET_NEXT_ACTION_NOISE_STD = 0.2;
+        static constexpr T TARGET_NEXT_ACTION_NOISE_CLIP = 0.5;
+    };
+    static constexpr TI N_ENVIRONMENTS = FW_N_ENVIRONMENTS;
+    static constexpr TI N_WARMUP_STEPS = 10000 / N_ENVIRONMENTS;
+    static constexpr TI N_WARMUP_STEPS_CRITIC = N_WARMUP_STEPS;
+    static constexpr TI N_WARMUP_STEPS_ACTOR = N_WARMUP_STEPS;
+    static constexpr TI STEP_LIMIT = STEP_LIMIT_MAX;
+    static constexpr TI REPLAY_BUFFER_CAP = 1000000 / N_ENVIRONMENTS;
+    static constexpr TI ACTOR_HIDDEN_DIM = 64;
+    static constexpr TI ACTOR_NUM_LAYERS = 3;
+    static constexpr TI CRITIC_HIDDEN_DIM = 64;
+    static constexpr TI CRITIC_NUM_LAYERS = 3;
+    static constexpr auto ACTOR_ACTIVATION_FUNCTION = rlt::nn::activation_functions::ActivationFunction::RELU;
+    static constexpr auto CRITIC_ACTIVATION_FUNCTION = rlt::nn::activation_functions::ActivationFunction::RELU;
+    static constexpr T EXPLORATION_NOISE = 0.1;
+    struct OPTIMIZER_PARAMETERS: rlt::nn::optimizers::adam::DEFAULT_PARAMETERS_TENSORFLOW<TYPE_POLICY>{
+        static constexpr T ALPHA = 3e-4;
+    };
+};
+static_assert(!FW_TD3 || FW_CRITIC_HIDDEN == 64, "the TD3 critic of RLtools has the actor's size: build with FW_CRITIC_HIDDEN=64");
+using LOOP_CONFIG = rlt::rl::algorithms::td3::loop::core::Config<TYPE_POLICY, TI, RNG, ENVIRONMENT, LOOP_CORE_PARAMETERS>;
+#else
 struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
     struct SAC_PARAMETERS: rlt::rl::algorithms::sac::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT::ACTION_DIM>{
         static constexpr T GAMMA = FW_GAMMA;
@@ -145,6 +194,7 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
     };
 };
 using LOOP_CONFIG = rlt::rl::algorithms::sac::loop::core::Config<TYPE_POLICY, TI, RNG, ENVIRONMENT, LOOP_CORE_PARAMETERS>;
+#endif
 using LOOP_STATE = LOOP_CONFIG::State<LOOP_CONFIG>;
 
 // ----- reward curriculum (environment.RewardCurriculum, gated as asymmetric_sac.CurriculumCallback) ---------------------
@@ -237,6 +287,7 @@ void lap(Profile& p, int part, bool ran, CLOCK_TIME& last){
     last = now;
 }
 
+#if !FW_TD3
 void profiled_step(DEVICE& device, LOOP_STATE& ts, Profile& p){
     using CORE = LOOP_CORE_PARAMETERS;
     using SAC = CORE::SAC_PARAMETERS;
@@ -277,6 +328,7 @@ void profiled_step(DEVICE& device, LOOP_STATE& ts, Profile& p){
     lap(p, 4, train_actor, last);
     ts.step++;
 }
+#endif
 
 struct Window{
     // statistics of the last n transitions of the replay buffer
@@ -560,7 +612,9 @@ int run(int argc, char** argv){
     if(steps % N_ENVIRONMENTS != 0) throw std::runtime_error("steps must be a multiple of the number of airplanes");
     if(curriculum_period == 0 || curriculum_period % 10000 != 0) throw std::runtime_error("--curriculum-period must be a positive multiple of 10000");
     if(checkpoint_interval % N_ENVIRONMENTS != 0) throw std::runtime_error("--checkpoint-interval must be a multiple of the number of airplanes");
-    std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"steps\": " << steps
+    if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
+    std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"algorithm\": \""
+        << (FW_TD3 ? "td3" : "sac") << "\",\n  \"steps\": " << steps
         << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH << ",\n  \"gamma\": " << FW_GAMMA
         << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
         << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
@@ -638,8 +692,12 @@ int run(int argc, char** argv){
     }
     // step counts airplane steps: one loop step flies all the airplanes
     for(TI step = N_ENVIRONMENTS; step <= steps; step += N_ENVIRONMENTS){
+#if FW_TD3
+        rlt::step(device, ts);
+#else
         if(profile) profiled_step(device, ts, timing);
         else rlt::step(device, ts);
+#endif
         if(step % 10000 == 0){
             Window w = window(runner, 50000);
             double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
