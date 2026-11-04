@@ -51,7 +51,7 @@ From `python/`, on a committed run directory:
 | `rl_vs_pid_windy_scenario1.gif` | `python examples/make_videos.py results/sac_gated_curriculum/windy_seed2 --seed 1 --comparison-only` |
 | `diagnosis.json` | `python examples/diagnose_flights.py results/sac_gated_curriculum/windy_seed2 --out diagnosis.json` |
 | `cpp/results/sweep/sweep.png` | `python tools/plot_sweep.py results/sweep` (from `cpp/`) |
-| `docs/figures/overview.png` | hand-written `docs/figures/overview.svg`, crops of the GIF frames above (`ov_*.png`) |
+| `docs/figures/overview.png` | `pdflatex overview.tex && pdftoppm -png -r 275 -singlefile overview.pdf overview` (from `docs/figures/`; TikZ with `paperfig.sty` and the GIF-frame crops `ov_*.png`) |
 
 `model.zip` is committed for `calm_seed0` and `windy_seed2` only.
 
