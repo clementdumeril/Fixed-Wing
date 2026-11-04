@@ -104,7 +104,7 @@
 
   <image href="ov_airspeed.png" x="523" y="472" width="252" height="127"/>
   <rect x="523" y="472" width="252" height="127" rx="6" fill="none" stroke="#C5CDD5"/>
-  <text x="523" y="622" font-size="15" fill="#5A6875">Airspeed in wind: SAC (orange), PID</text>
+  <text x="523" y="622" font-size="15" fill="#5A6875">Airspeed in wind: SAC orange, PID blue</text>
 
   <g font-size="16" fill="#15202A">
     <text x="808" y="492">C++, calm air: critic 256 learns,</text>
