@@ -128,6 +128,14 @@ foreach(size 256:64 128:64 128:256 64:256)
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
+# critic 128, batch 256 on the advanced_plane with the update intervals of the L2F paper: the critics every 10 steps,
+# the actor every 20
+add_executable(train_sac_c128_b256_tracking_g995_px4plane_i10a20 src/train_sac.cpp)
+target_include_directories(train_sac_c128_b256_tracking_g995_px4plane_i10a20 PRIVATE include)
+target_link_libraries(train_sac_c128_b256_tracking_g995_px4plane_i10a20 PRIVATE RLtools::RLtools)
+target_compile_definitions(train_sac_c128_b256_tracking_g995_px4plane_i10a20 PRIVATE FW_CRITIC_HIDDEN=128 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2)
+list(APPEND TRAIN_TARGETS train_sac_c128_b256_tracking_g995_px4plane_i10a20)
+
 # a flight of the deployed policy in Gazebo (deploy/ros2/fly_sitl.sh) against this simulator
 add_executable(compare_sitl src/compare_sitl.cpp)
 target_include_directories(compare_sitl PRIVATE include deploy/ros2/fw_policy/policy)

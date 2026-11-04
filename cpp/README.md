@@ -67,7 +67,8 @@ in `checkpoints.csv` (RMS position error + 10 m per % of failed flights). The sc
 between checkpoints 50k steps apart, so the last actor is often not the best one. The `train_sac_*_e<N>` targets fly N airplanes in parallel, with one network update per step of
 all of them.
 The `train_sac_*_i<K>` targets update the networks every K steps only, as the L2F configurations of RLtools: each
-step is about K times cheaper.
+step is about K times cheaper. `train_sac_c128_b256_tracking_g995_px4plane_i10a20` uses the intervals of the L2F paper: the critics every
+10 steps and the actor every 20 (`FW_ACTOR_INTERVAL_FACTOR=2`).
 Each run writes `evaluation.json` (the 100 Python test flights) and `evaluation_random.json` (100 random starts, the
 same for every run), the first 10 flights of each step by step (`flights.csv`, `flights_random.csv`) and the trained
 actor as C++ code (`actor.h`).
@@ -101,6 +102,7 @@ sbatch slurm/tracking_critic.slurm    # critics of 256, 128 and 64, 400k steps, 
 sbatch slurm/profile.slurm            # time of each part of a training step for the three critics
 sbatch slurm/tracking_px4plane.slurm  # tracking on PX4's advanced_plane, critic 128, 400k steps, 10 seeds
 sbatch slurm/tracking_px4plane_long.slurm  # the same for 3M steps, keeping the best checkpoint, 10 seeds
+sbatch slurm/tracking_px4plane_batch.slurm # batch 256: updates at every step, and with the L2F intervals for 400k and 4M steps, 10 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.

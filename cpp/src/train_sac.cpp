@@ -27,7 +27,8 @@
 //   score is the RMS error of the completed flights (position, or course for the course task) + 10 per % of failed
 //   flights. The validation flights have their own random numbers, so training is the same as without the option
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
-// train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL)
+// train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
+// critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR)
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -100,9 +101,14 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #define FW_N_ENVIRONMENTS 1
 #endif
 // loop steps between two network updates (critics, actor and entropy coefficient, critic targets): fewer updates per
-// step of experience, as the L2F configurations of RLtools (src/rl/zoo/l2f: every 5 to 16 steps)
+// step of experience, as the L2F configurations of RLtools (src/rl/zoo/l2f: every 5 to 16 steps) and the L2F paper
+// (learning-to-fly src/config/config.h: the critics every 10 steps, the actor every 20)
 #ifndef FW_TRAINING_INTERVAL
 #define FW_TRAINING_INTERVAL 1
+#endif
+// the actor (and entropy coefficient) every FW_ACTOR_INTERVAL_FACTOR critic updates: 2 in the L2F paper, as in TD3
+#ifndef FW_ACTOR_INTERVAL_FACTOR
+#define FW_ACTOR_INTERVAL_FACTOR 1
 #endif
 
 struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
@@ -112,7 +118,7 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
         static constexpr TI CRITIC_BATCH_SIZE = FW_BATCH;
         static constexpr T ALPHA = 1.0;  // initial entropy coefficient, as stable-baselines3 "auto"
         static constexpr TI CRITIC_TRAINING_INTERVAL = FW_TRAINING_INTERVAL;
-        static constexpr TI ACTOR_TRAINING_INTERVAL = FW_TRAINING_INTERVAL;
+        static constexpr TI ACTOR_TRAINING_INTERVAL = FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR;
         static constexpr TI CRITIC_TARGET_UPDATE_INTERVAL = FW_TRAINING_INTERVAL;
     };
     // loop steps below: each one steps all the airplanes; the counts are in airplane steps, as with one airplane
@@ -564,6 +570,7 @@ int run(int argc, char** argv){
         << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
+        << ",\n  \"actor_training_interval\": " << FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
         << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
 
