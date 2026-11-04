@@ -30,7 +30,7 @@ class RewardConfig:
     # weight * (error / scale)^2. Every step in flight earns at least (1 - cost_cap) * survival, even far from the
     # setpoint, so ending the episode never pays (L2F's survival bonus against "learning to terminate"). The cap is
     # smooth: with a hard min(cost, cap) the reward went flat on 98 % of the training steps once the curriculum raised
-    # the weights, and the policy stopped tracking the setpoint (Savio job 40282709).
+    # the weights, and the policy stopped tracking the setpoint.
     survival: float = 1.0
     cost_cap: float = 0.5
     airspeed_scale: float = 2.0  # m/s

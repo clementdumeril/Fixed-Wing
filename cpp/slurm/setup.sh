@@ -1,6 +1,6 @@
 #!/bin/bash
-# Configure the C++ build on a Savio login node (light: downloads RLtools and its dependencies, compiles nothing).
-# Then: sbatch savio/build.slurm, then sbatch savio/sweep.slurm. Run from Fixed-Wing/cpp:  source savio/setup.sh
+# Configure the C++ build on the cluster login node (light: downloads RLtools and its dependencies, compiles nothing).
+# Then: sbatch slurm/build.slurm, then sbatch slurm/sweep.slurm. Run from Fixed-Wing/cpp:  source slurm/setup.sh
 module load gcc/11.4.0 cmake/3.27.7 python/3.11.6-gcc-11.4.0
 source ~/.venvs/fixed-wing/bin/activate
 pip install -q mkl-devel   # Intel MKL for the network computations, as on the laptop

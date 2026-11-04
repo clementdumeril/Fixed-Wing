@@ -5,7 +5,7 @@
 # then 20 m with a linear distance cost of weight 0.15 and 0.3 (at most 0.3: the reward of a step stays >= 0, so that
 # ending the flight never pays). Test A: 100 normal flights (neutral start); test B: 100 random starts.
 # Submit from Fixed-Wing/cpp after the train_sac_c256_b64_tracking target is built:
-# sbatch savio/tracking.slurm
+# sbatch slurm/tracking.slurm
 #SBATCH --job-name=fw-cpp-tracking
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

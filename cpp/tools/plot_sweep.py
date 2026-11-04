@@ -1,4 +1,4 @@
-"""Figure and table of the network and batch size sweep (savio/sweep.slurm, savio/train.slurm).
+"""Figure and table of the network and batch size sweep (slurm/sweep.slurm, slurm/train.slurm).
 
 python tools/plot_sweep.py results/sweep   (from cpp/)
 
@@ -63,7 +63,7 @@ def main():
     right.axhline(pid["mean_return"], color="black", linestyle="--", linewidth=1, label="PID")
     right.axhline(np.mean([s["mean_return"] for s in sac]), color="gray", linestyle=":", linewidth=1.5,
                   label="Python SAC (3.5 h on 8 cores)")
-    right.set(xlabel="training time on one Savio core (min)", ylabel="mean return on the 100 test scenarios",
+    right.set(xlabel="training time on one cluster core (min)", ylabel="mean return on the 100 test scenarios",
               title="Result against training cost (one dot per seed)", xscale="log")
     for ax in (left, right):
         ax.grid(alpha=0.3)

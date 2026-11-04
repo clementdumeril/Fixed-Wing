@@ -2,7 +2,7 @@
 # Time of each part of a training step (airplanes, batch, critics, critic targets, actor and entropy coefficient) for
 # the critics of 256, 128 and 64 neurons on the best tracking setting: 30k steps, 10k of warmup then 20k updates.
 # Submit from Fixed-Wing/cpp with the train_sac_c{256,128,64}_b64_tracking_g995 targets built:
-# sbatch savio/profile.slurm
+# sbatch slurm/profile.slurm
 #SBATCH --job-name=fw-cpp-profile
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

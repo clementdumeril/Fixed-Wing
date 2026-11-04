@@ -1,7 +1,7 @@
 #!/bin/bash
 # One C++ variant, one seed per array task, any number of steps (calm air), then the evaluation on the 100 test
-# scenarios. Submit from Fixed-Wing/cpp after savio/build.slurm, e.g. 3 seeds of critic 128 x batch 64 for 3 M steps:
-#   sbatch --array=0-2 savio/train.slurm train_sac_c128_b64 3000000
+# scenarios. Submit from Fixed-Wing/cpp after slurm/build.slurm, e.g. 3 seeds of critic 128 x batch 64 for 3 M steps:
+#   sbatch --array=0-2 slurm/train.slurm train_sac_c128_b64 3000000
 #SBATCH --job-name=fw-cpp-train
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

@@ -1,12 +1,12 @@
 #!/bin/bash
 # Tracking task with the velocity cost on a commanded velocity that leads to the reference point: reference velocity
 # - gain x position error, the correction at most 5 m/s; gain 0.1 and 0.2 /s, 3 seeds each, with the setting of
-# savio/tracking_gamma.slurm (discount factor 0.995, position cost scale 20 m, linear distance cost 0.3). With the
+# slurm/tracking_gamma.slurm (discount factor 0.995, position cost scale 20 m, linear distance cost 0.3). With the
 # reference velocity alone, the policies flew at that velocity 10 to 50 m behind the point, since closing the gap
 # costs velocity error. The reference without guidance is the tracking_g995 runs of that script.
 # Submit from Fixed-Wing/cpp after rebuilding the train_sac_c256_b64_tracking_g995 target:
-# sbatch savio/tracking_guidance.slurm                               1 M steps
-# sbatch --export=ALL,STEPS=3000000 savio/tracking_guidance.slurm    any number of steps (about 1 h per million)
+# sbatch slurm/tracking_guidance.slurm                               1 M steps
+# sbatch --export=ALL,STEPS=3000000 slurm/tracking_guidance.slurm    any number of steps (about 1 h per million)
 #SBATCH --job-name=fw-cpp-guide
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

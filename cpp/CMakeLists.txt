@@ -36,7 +36,7 @@ target_include_directories(train_sac_small PRIVATE include)
 target_link_libraries(train_sac_small PRIVATE RLtools::RLtools)
 target_compile_definitions(train_sac_small PRIVATE FW_CRITIC_HIDDEN=64 FW_BATCH=64)
 
-# more critic:batch sizes, for a sweep between the two above (savio/sweep.slurm)
+# more critic:batch sizes, for a sweep between the two above (slurm/sweep.slurm)
 set(FW_SWEEP "256:64;128:128;128:64;64:256" CACHE STRING "critic:batch sizes of the extra train_sac variants")
 set(TRAIN_TARGETS train_sac train_sac_small)
 foreach(size ${FW_SWEEP})

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Compile every C++ target on a compute node (-march=native matches the nodes of the sweep), export the 100 test
-# scenarios and check the C++ port against the Python environment. Submit from Fixed-Wing/cpp after savio/setup.sh.
+# scenarios and check the C++ port against the Python environment. Submit from Fixed-Wing/cpp after slurm/setup.sh.
 #SBATCH --job-name=fw-cpp-build
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc

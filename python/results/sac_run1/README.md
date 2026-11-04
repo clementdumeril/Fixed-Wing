@@ -1,4 +1,4 @@
-# First SAC run (Savio job 40252558, seed 0)
+# First SAC run (Slurm job 40252558, seed 0)
 
 SAC + MLP (actor 64-64, critics 256-256), asymmetric actor-critic, constant reward weights (no curriculum),
 1 000 000 steps in 2 h 42 on 8 cores. Aerosonde placeholder, no wind, no randomization.
