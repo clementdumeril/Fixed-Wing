@@ -114,13 +114,17 @@ foreach(critic 128 64)
     endforeach()
 endforeach()
 
-# the tracking task on PX4's advanced_plane instead of the Aerosonde, to fly the policy in Gazebo with PX4 SITL
-foreach(critic 256 128)
-    set(target train_sac_c${critic}_b64_tracking_g995_px4plane)
+# the tracking task on PX4's advanced_plane instead of the Aerosonde, to fly the policy in Gazebo with PX4 SITL;
+# critic:batch sizes, with the batch of 256 of Learning to Fly in Seconds (critic 64)
+foreach(size 256:64 128:64 128:256 64:256)
+    string(REPLACE ":" ";" parts ${size})
+    list(GET parts 0 critic)
+    list(GET parts 1 batch)
+    set(target train_sac_c${critic}_b${batch}_tracking_g995_px4plane)
     add_executable(${target} src/train_sac.cpp)
     target_include_directories(${target} PRIVATE include)
     target_link_libraries(${target} PRIVATE RLtools::RLtools)
-    target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=${critic} FW_BATCH=64 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1)
+    target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=${critic} FW_BATCH=${batch} FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1)
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
