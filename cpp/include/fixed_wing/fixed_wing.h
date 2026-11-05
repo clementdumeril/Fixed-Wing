@@ -19,7 +19,9 @@
 #endif
 // 0: Aerosonde (Beard & McLain), the placeholder of the Python simulator. 1: the advanced_plane of PX4's Gazebo models
 // (1 kg, AVL coefficients, gz-sim AdvancedLiftDrag and MulticopterMotorModel), so that a policy trained here can fly in
-// Gazebo with PX4 software-in-the-loop (train_sac_*_px4plane). C++ only.
+// Gazebo with PX4 software-in-the-loop (train_sac_*_px4plane). 2: the lab's E-flite UMX Eratix 3D FF 450 mm (83.5 g,
+// flat foam), a first model from geometry and textbook aerodynamics (docs/eratix_model.md), with task settings scaled to
+// its speed of about 8 m/s (train_sac_*_eratix). C++ only.
 #ifndef FW_AIRPLANE
 #define FW_AIRPLANE 0
 #endif
@@ -56,7 +58,8 @@ namespace fixed_wing{
         T wing_span;
         T mean_chord;
         T aerodynamics[N_COEFFICIENTS];
-        T thrust_max;  // thrust = throttle * thrust_max, along body x (advanced_plane: at full rotor speed)
+        T thrust_max;  // thrust = throttle * thrust_max, along body x (advanced_plane: at full rotor speed; Eratix: static
+                   // thrust at full throttle, the scale of its propeller model)
         T actuator_time_constants[N_ACTUATORS];
         T throttle_time_constant_down;  // > 0: the throttle goes down with this time constant (advanced_plane rotor)
         T actuator_limits[N_ACTUATORS][2];  // rad for the surfaces, [0, 1] for the throttle
@@ -123,6 +126,9 @@ namespace fixed_wing{
 #if FW_AIRPLANE == 1
         T alpha_soft_min = T(-0.19198621771937624);  // -11 deg, 4 deg before the limits of the advanced_plane
         T alpha_soft_max = T(0.24434609527920614);  // 14 deg
+#elif FW_AIRPLANE == 2
+        T alpha_soft_min = T(-0.17453292519943295);  // -10 deg, 4 deg before the limits of the Eratix
+        T alpha_soft_max = T(0.20943951023931956);  // 12 deg: its stall
 #else
         T alpha_soft_min = T(-0.10471975511965977);  // -6 deg
         T alpha_soft_max = T(0.19198621771937624);  // 11 deg
@@ -142,12 +148,24 @@ namespace fixed_wing{
         // point, gain x position error, at most velocity_guidance_max. With the reference velocity alone, flying at
         // that velocity some 30 to 50 m behind the point was a stable optimum: closing the gap costs velocity error
         T velocity_guidance_gain = 0;  // 1/s
+#if FW_AIRPLANE == 2
+        // Eratix: about half the speed of the advanced_plane and a smaller field, so half the velocity and distance
+        // scales: the same reward for the same error relative to the flight
+        T velocity_guidance_max = T(2.5);  // m/s
+        T velocity_scale = 2;  // m/s
+#else
         T velocity_guidance_max = 5;  // m/s
         T velocity_scale = 4;  // m/s
+#endif
         T position_weight = 0.6;
         T velocity_weight = 0.3;
+#if FW_AIRPLANE == 2
+        T far_position_scale = 50;  // m
+        T far_velocity_scale = 8;  // m/s
+#else
         T far_position_scale = 100;  // m
         T far_velocity_scale = 15;  // m/s
+#endif
     };
 
     // how an episode starts (sample_initial_state)
@@ -162,10 +180,18 @@ namespace fixed_wing{
         T frequency = 50;  // Hz
         int n_substeps = 2;
         int latency_steps = 1;
+#if FW_AIRPLANE == 2
+        // Eratix: a small airplane flown within sight, at a few tens of meters (see the tracking settings below)
+        T altitude_range[2] = {20, 45};  // m
+#else
         T altitude_range[2] = {50, 120};  // m
+#endif
 #if FW_AIRPLANE == 1
         // advanced_plane: 1 kg, 0.34 m2, stalls near 6 m/s and cruises near 15 m/s at 25% throttle (PX4 FW_THR_TRIM)
         T airspeed_range[2] = {12, 18};  // m/s
+#elif FW_AIRPLANE == 2
+        // Eratix: 83.5 g, 0.053 m2, stalls near 6 m/s, cruises near 8 m/s at half throttle (docs/eratix_model.md)
+        T airspeed_range[2] = {7, 10};  // m/s
 #else
         T airspeed_range[2] = {20, 30};  // m/s
 #endif
@@ -177,12 +203,23 @@ namespace fixed_wing{
 #if FW_AIRPLANE == 1
         T alpha_range[2] = {T(-0.2617993877991494), T(0.3141592653589793)};  // -15, 18 deg: its stall is at 19.4 deg
         T airspeed_limits[2] = {7, 30};  // m/s
+#elif FW_AIRPLANE == 2
+        // Eratix: flat-plate stall at +-12 deg, a gentle one (the lift drops to about 0.6 and stays there); the flight
+        // ends 2-4 deg past it, and below 3.5 m/s (about 0.6 times the stall speed) or above 25 m/s (past its dive speed;
+        // level flight tops out near 15.5 m/s)
+        T alpha_range[2] = {T(-0.24434609527920614), T(0.2792526803190927)};  // -14, 16 deg
+        T airspeed_limits[2] = {T(3.5), 25};  // m/s
 #else
         T alpha_range[2] = {T(-0.17453292519943295), T(0.2617993877991494)};  // -10, 15 deg
         T airspeed_limits[2] = {15, 40};  // m/s
 #endif
+#if FW_AIRPLANE == 2
+        T altitude_error_max = 25;  // m
+        T altitude_floor = 5;  // m
+#else
         T altitude_error_max = 50;  // m
         T altitude_floor = 20;  // m
+#endif
         T randomization = 0;  // every factor uniform in [1 - r, 1 + r]
         T wind_speed_max = 0;  // m/s, constant horizontal wind, random direction
         StartMode start = TRIMMED;
@@ -192,6 +229,8 @@ namespace fixed_wing{
         T random_rate_max = 0.5;  // rad/s
 #if FW_AIRPLANE == 1
         T random_airspeed_range[2] = {11, 19};  // m/s
+#elif FW_AIRPLANE == 2
+        T random_airspeed_range[2] = {6, 12};  // m/s
 #else
         T random_airspeed_range[2] = {18, 32};  // m/s
 #endif
@@ -204,11 +243,25 @@ namespace fixed_wing{
         T position_integral_time = 10;  // s
         T position_integral_scale = 200;  // m s
         // tracking task: the reference starts up to 50 m away horizontally and 15 m vertically, flies at 20-28 m/s
-        // within 90 deg of the airplane's heading, and climbs or descends at up to 1 m/s inside 40-140 m of altitude
+        // within 90 deg of the airplane's heading, and climbs or descends at up to 1 m/s inside 40-140 m of altitude.
+        // Eratix: the same task at its scale. It flies 7-10 m/s (cruise near 8 m/s), turns on a radius of about 6 m at
+        // 45 deg of bank, and is flown within sight in a field: the point starts up to 20 m away and 5 m above or below,
+        // climbs at up to 0.5 m/s inside 15-60 m, and the flight ends 100 m from it (about 10 s of flight)
+#if FW_AIRPLANE == 2
+        T reference_offset_max = 20;  // m
+#else
         T reference_offset_max = 50;  // m
+#endif
         // direction of the point from the airplane at the start, relative to the airplane's course: 180 deg is anywhere
         // around it (about half the starts put the point behind, which takes steep turns to reach); 45 deg is ahead
         T reference_bearing_max = T(3.141592653589793);  // rad
+#if FW_AIRPLANE == 2
+        T reference_altitude_offset_max = 5;  // m
+        T reference_speed_range[2] = {7, 10};  // m/s, horizontal
+        T reference_climb_max = T(0.5);  // m/s
+        T reference_altitude_range[2] = {15, 60};  // m, over the 30 s of an episode
+        T position_error_max = 100;  // m: farther from the reference, the flight ends
+#else
         T reference_altitude_offset_max = 15;  // m
 #if FW_AIRPLANE == 1
         T reference_speed_range[2] = {12, 18};  // m/s, horizontal
@@ -218,6 +271,7 @@ namespace fixed_wing{
         T reference_climb_max = 1;  // m/s
         T reference_altitude_range[2] = {40, 140};  // m, over the 30 s of an episode
         T position_error_max = 300;  // m: farther from the reference, the flight ends
+#endif
         RewardConfig<T> reward;
     };
 

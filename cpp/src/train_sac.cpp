@@ -30,7 +30,8 @@
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
 // critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
-// train with TD3 instead of SAC (FW_TD3), the algorithm of the L2F paper
+// train with TD3 instead of SAC (FW_TD3), the algorithm of the L2F paper; the train_sac_*_eratix targets fly the lab's
+// E-flite UMX Eratix instead of the advanced_plane (FW_AIRPLANE=2, docs/eratix_model.md)
 // The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
 // The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
 // then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
@@ -207,7 +208,8 @@ struct Curriculum{
     TI period = 100000;
     int n_stages = 5;
     // distance to the reference [m], or course [rad]; the mean distance includes the approach from up to 50 m away
-    T_ENV advance_error = FW_TRACKING ? 40 : 15 * fixed_wing::PI / 180;
+    // (Eratix: 20 m, so the gate is scaled with it)
+    T_ENV advance_error = FW_TRACKING ? (FW_AIRPLANE == 2 ? 15 : 40) : 15 * fixed_wing::PI / 180;
     Curriculum(){
         target.airspeed_weight = 1.2;
         target.altitude_weight = 1.2;
@@ -626,7 +628,7 @@ int run(int argc, char** argv){
         << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
         << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")
         << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"airplane\": \""
-        << (FW_AIRPLANE == 1 ? "px4_advanced_plane" : "aerosonde") << "\",\n  \"position_scale\": " << position_scale
+        << (FW_AIRPLANE == 1 ? "px4_advanced_plane" : FW_AIRPLANE == 2 ? "eratix" : "aerosonde") << "\",\n  \"position_scale\": " << position_scale
         << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL

@@ -149,3 +149,16 @@ The policy in `policy_weights.h` is seed 9 of the 400k-step critic-128 runs on t
 in its SITL flight it followed the point at 20 m RMSE over the last 30 s, and this simulator flies the same
 flight at 20 m, 6 m below the point in both. Seed 3, the first policy flown, followed it at 15 m in Gazebo but 9 m in
 this simulator: its commands changed 10 times more from step to step, and amplified the noise of PX4's estimate.
+
+## The lab's E-flite UMX Eratix
+
+`FW_AIRPLANE=2` flies the E-flite UMX Eratix 3D FF 450 mm (83.5 g, flat foam), a first model from its specs, product
+photos and textbook aerodynamics, before any flight data: [`../docs/eratix_model.md`](../docs/eratix_model.md) gives
+the sources, geometry, every coefficient with its derivation and range, the checks and the identification flights to
+fly next. It reuses the structure of the advanced_plane's AdvancedLiftDrag model (attached-flow coefficients blended
+into a flat-plate model past a 12° stall) with the 28 linear coefficients in `Parameters::aerodynamics`, so that they
+are randomized, and a motor-propeller model whose thrust falls with the airspeed (T/W 3.65 static). It trims level from
+6 to 15.5 m/s, cruising near 8 m/s at half throttle, so the tracking task is scaled to it (point at 7-10 m/s, up to
+20 m away, 15-60 m of altitude; the table is in the document). Targets: `train_sac_c128_b256_tracking_g995_eratix_i10a20`
+(the current best recipe of the advanced_plane) and `eratix_trim` (trim table, stall speed, linear modes, hands-off
+flight: `eratix_trim [out_dir]`).

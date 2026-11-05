@@ -177,6 +177,116 @@ namespace fixed_wing{
         for(int i = 0; i < 4 + N_COEFFICIENTS; i++) p.randomization[i] = 1;
     }
 
+    // E-flite UMX Eratix 3D FF 450 mm (EFLU02050), the lab's airplane: a first model from its geometry and textbook
+    // aerodynamics, before any identification. Every value is derived in docs/eratix_model.md (sources, photo scaling,
+    // formulas, +- ranges); the comments here only say where each one comes from. [estimate] marks a value of ours.
+    // Flat-plate foam airframe: symmetric, no camber, no incidence, no dihedral. Reference point: the manual's center of
+    // gravity, 76 mm behind the (straight) wing leading edge, 63 % of the mean chord
+    namespace eratix_coefficients{
+        constexpr double mass = 0.0835;  // kg, manual, with the recommended 2S 300 mAh battery
+        // [estimate] component mass breakdown, docs section 3: FLU = FRD for a diagonal tensor (products neglected)
+        constexpr double Jx = 3.9e-4, Jy = 9.3e-4, Jz = 1.27e-3;  // kg m2
+        constexpr double density = 1.204;  // kg/m3, sea level at 20 C, as the advanced_plane
+        // span from the manual; area and mean chord [estimate] from the top-view product photo scaled on the span
+        constexpr double span = 0.450, area = 0.0531, mac = 0.121;  // m, m2, m: aspect ratio 3.8
+        constexpr double oswald = 0.8;  // [estimate] low-AR flat plate with a profile fuselage
+        // attached flow, in the order of the Coefficient enum (per rad, rates per b/2V or c/2V), stability derivatives
+        // about the center of gravity, signs as Beard & McLain: aileron > 0 rolls right, elevator > 0 (trailing edge
+        // down) pitches down, rudder > 0 (trailing edge left) yaws left. All [estimate], docs section 4
+        constexpr double linear[N_COEFFICIENTS] = {
+            0.0, 4.2, 2.9, 0.63,  // C_L: 0 (flat, no incidence), alpha (Helmbold + tail), q (tail + downwash lag), elevator
+            0.065, oswald,  // C_D_p: friction and bluntness of the foam, landing gear, motor; Oswald efficiency
+            0.0, -0.85, -0.05, 0.6, 0.0, 0.36,  // C_Y: 0, beta (fin, profile fuselage, side force generators), p, r, -, rudder
+            0.0, -0.03, -0.40, 0.12, 0.35, 0.02,  // C_l: 0, beta (fin above the CG), p (lifting line), r, aileron, rudder
+            0.0, 0.65, -11.0, -1.13,  // C_m: 0, alpha (> 0: neutral point ahead of the manual CG), q (+ alpha dot), elevator
+            0.0, 0.27, -0.02, -0.42, -0.03, -0.22,  // C_n: 0, beta, p, r, aileron (adverse yaw), rudder
+        };
+        // stall: the blend of the AdvancedLiftDrag system, sharper than its default (M 15) so that the post-stall model
+        // weighs about 1 % at alpha = 0, as for the advanced_plane (it would be 8 % with M 15 and this stall angle)
+        constexpr double alpha_stall = 0.20943951023931956;  // 12 deg [estimate]: C_L 0.88, flat plates of AR 2-4
+        constexpr double M = 25;
+        // after the stall the force on a flat plate is normal to it (C_D / C_L = tan alpha, Ortiz et al. 2015), of
+        // C_N90 sqrt(|sin alpha|): 0.84 at 30 deg, C_N90 at 90 deg (ESDU 70015 for AR 3.8). The root is a fit of ours to
+        // the plateau that low-AR plates show between the stall and 45 deg [estimate]; smoothed near 0
+        constexpr double CN90 = 1.19;
+        constexpr double CN_smoothing = 0.05;  // sin alpha below which the root becomes linear
+        constexpr double Cm_post = -0.42;  // [estimate] C_m after the stall, times the same shape: the tail keeps pitching down
+        // drag of the deflected surfaces, per rad2 [estimate]: a flat flap of that area at the deflection angle
+        constexpr double CD_aileron = 0.4, CD_elevator = 0.2, CD_rudder = 0.15;
+        // surface limits [estimate]: the high-rate throws of the 860 mm Eratix (mm at the trailing edge, its manual) over
+        // the surface chords of this one scaled by 1.92; the 450 mm manual gives percentages only
+        constexpr double aileron_max = 0.6981317007977318, elevator_max = 0.6981317007977318;  // 40 deg
+        constexpr double rudder_max = 0.8726646259971648;  // 50 deg
+        // servos: 0.13-0.14 s per 60 deg for the Spektrum 2.3-2.9 g linear servos (servo chart, 4.2 V); 95 % of a step in
+        // that time is 3 time constants. The A202's own speed is not published
+        constexpr double servo_time_constant = 0.045;  // s
+        // propeller 148 mm x 35 mm (Horizon specs), 1404 3200 Kv motor (manual), 2S LiPo: the rotor speed is the one at
+        // which the motor torque at the commanded duty balances the propeller torque at the current airspeed, so that
+        // the thrust falls with the airspeed as the propeller unloads. C_T = C_T0 (1 - J / J0), C_P = C_P0 (1 - kP J),
+        // J = V / (n D). All [estimate] except D and Kv, docs section 5
+        constexpr double prop_diameter = 0.148;  // m
+        constexpr double CT0 = 0.06, CP0 = 0.020, J0 = 0.35, kP = 2.0;
+        constexpr double kv = 3200;  // rpm/V
+        constexpr double battery_voltage = 7.6, resistance = 0.25, no_load_current = 0.5;  // V (2S, half charge), ohm, A
+        constexpr double rotor_inertia = 3e-6;  // kg m2: propeller and motor bell
+        // spin-up: rotor inertia over the slopes of the motor and propeller torques (about 0.05 s); spin-down slower,
+        // the propeller alone braking
+        constexpr double motor_time_constant_up = 0.05, motor_time_constant_down = 0.08;  // s
+        // propeller turning clockwise seen from behind (a standard tractor propeller, [assumption]): the reaction
+        // torque rolls the airplane left, the rotor's angular momentum points forward
+        constexpr double rotation = 1;
+    }
+
+    template <typename T>
+    void eratix_propeller(T air_density, T duty, T v_axial, T& thrust, T& torque, T& n){
+        // rotor speed n [rev/s] where the motor torque kt ((duty U - kt omega) / R - I0) equals the propeller torque
+        // rho D^5 C_P n^2 / (2 pi): a quadratic in n. No positive root: the motor cannot turn the propeller, no thrust
+        using namespace eratix_coefficients;
+        T D = T(prop_diameter), v = std::fmax(v_axial, T(0));  // flying backward: the static values
+        T kt = T(60 / (2 * PI * kv));  // N m / A = V s / rad
+        T a = air_density * D * D * D * D * D * T(CP0) / T(2 * PI);
+        T b = -air_density * D * D * D * D * T(CP0 * kP) * v / T(2 * PI) + T(2 * PI) * kt * kt / T(resistance);
+        T c = kt * (T(no_load_current) - duty * T(battery_voltage) / T(resistance));
+        T discriminant = b * b - 4 * a * c;
+        n = c < 0 && discriminant > 0 ? (-b + std::sqrt(discriminant)) / (2 * a) : T(0);
+        // ideal speed controller and propeller, n D the speed of the blade tips per revolution
+        thrust = air_density * D * D * D * D * T(CT0) * (n * n - n * v / (T(J0) * D));
+        torque = air_density * D * D * D * D * D * T(CP0) * (n * n - T(kP) * n * v / D) / T(2 * PI);
+    }
+
+    template <typename T>
+    void eratix(Parameters<T>& p){
+        using namespace eratix_coefficients;
+        p.mass = T(mass);
+        p.gravity[0] = 0; p.gravity[1] = 0; p.gravity[2] = T(-9.81);
+        T J[3][3] = {{T(Jx), 0, 0}, {0, T(Jy), 0}, {0, 0, T(Jz)}};
+        for(int i = 0; i < 3; i++) for(int j = 0; j < 3; j++) p.J[i][j] = J[i][j];
+        invert3(p.J, p.J_inv);
+        p.air_density = T(density);
+        p.wing_area = T(area);
+        p.wing_span = T(span);
+        p.mean_chord = T(mac);
+        // in p.aerodynamics, so that the randomization factors apply to them (the advanced_plane keeps its own)
+        for(int i = 0; i < N_COEFFICIENTS; i++) p.aerodynamics[i] = T(linear[i]);
+        // static thrust at full throttle (about 3.0 N, 3.6 times the weight): the propeller model is scaled by
+        // thrust_max over this value, so that the thrust randomization factor applies to it
+        T n, torque;
+        eratix_propeller(p.air_density, T(1), T(0), p.thrust_max, torque, n);
+        T tau[N_ACTUATORS] = {T(servo_time_constant), T(servo_time_constant), T(servo_time_constant), T(motor_time_constant_up)};
+        p.throttle_time_constant_down = T(motor_time_constant_down);
+        T limit[N_ACTUATORS] = {T(aileron_max), T(elevator_max), T(rudder_max), T(1)};
+        for(int i = 0; i < N_ACTUATORS; i++){
+            p.actuator_time_constants[i] = tau[i];
+            p.actuator_limits[i][0] = i == THROTTLE ? T(0) : -limit[i];
+            p.actuator_limits[i][1] = limit[i];
+        }
+        p.dt = T(0.01);
+        p.n_substeps = 1;
+        p.latency_steps = 0;
+        for(int i = 0; i < 3; i++) p.wind[i] = 0;
+        for(int i = 0; i < 4 + N_COEFFICIENTS; i++) p.randomization[i] = 1;
+    }
+
     template <typename T>
     struct AirData{
         T v_frd[3];  // air-relative velocity, aerospace body frame (x forward, y right, z down)
@@ -276,10 +386,76 @@ namespace fixed_wing{
     }
 
     template <typename T>
+    void eratix_aerodynamics(const Parameters<T>& p, const Body<T>& x, T force[3], T moment[3]){
+        // the structure of advanced_aerodynamics (attached-flow coefficients blended into a flat-plate model past the
+        // stall, rate terms in 0.5 rho V, so that they stay finite in slow flight), with the linear coefficients of
+        // p.aerodynamics (randomized), the full airspeed and sideslip as aerosonde, the pitching moment blended too
+        // (this airplane flies past the stall), the drag of the deflected surfaces and a motor-propeller model.
+        // A separate function so that the advanced_plane keeps exactly its results. Not modelled: the propeller's
+        // slipstream over the wing and tail (hover, torque roll), its normal force, ground effect
+        using namespace eratix_coefficients;
+        const T* c = p.aerodynamics;
+        AirData<T> a = air_data(p, x);
+        const T* w = x.angular_velocity;  // FLU
+        T f[3] = {0, 0, 0}, m[3] = {0, 0, 0};  // FRD
+        T delta_a = x.actuators[AILERON], delta_e = x.actuators[ELEVATOR], delta_r = x.actuators[RUDDER];
+        if(a.airspeed >= T(MIN_AIRSPEED)){
+            T S = p.wing_area, b = p.wing_span, cbar = p.mean_chord, V = a.airspeed;
+            T alpha = a.alpha, beta = a.beta, sa = std::sin(alpha), ca = std::cos(alpha);
+            T P = w[0], Q = -w[1], Rr = -w[2];  // FRD rates
+            T dyn = T(0.5) * p.air_density * V * V, hrv = T(0.5) * p.air_density * V;
+            T up = std::exp(-T(M) * (alpha - T(alpha_stall))), down = std::exp(T(M) * (alpha + T(alpha_stall)));
+            T sigma = (1 + up + down) / ((1 + up) * (1 + down));  // 0 before the stall, 1 after it
+            // flat plate past the stall: normal force C_N90 sqrt(|sin alpha|), with the sign of sin alpha
+            T shape = sa / std::sqrt(std::sqrt(sa * sa + T(CN_smoothing * CN_smoothing)));
+            T CN = T(CN90) * shape;
+            T aspect_ratio = b * b / S;
+            T CL_attached = c[C_L_0] + c[C_L_alpha] * alpha + c[C_L_delta_e] * delta_e;
+            T CL = (1 - sigma) * (c[C_L_0] + c[C_L_alpha] * alpha) + sigma * CN * ca + c[C_L_delta_e] * delta_e;
+            T CD = (1 - sigma) * (c[C_D_p] + CL_attached * CL_attached / (T(PI) * c[oswald_efficiency] * aspect_ratio))
+                 + sigma * (c[C_D_p] + CN * sa)
+                 + T(CD_aileron) * delta_a * delta_a + T(CD_elevator) * delta_e * delta_e + T(CD_rudder) * delta_r * delta_r;
+            T lift = (CL * dyn + c[C_L_q] * (Q * cbar / 2) * hrv) * S;
+            T drag = CD * dyn * S;
+            T CY = c[C_Y_0] + c[C_Y_beta] * beta + c[C_Y_delta_a] * delta_a + c[C_Y_delta_r] * delta_r;
+            T side = (CY * dyn + c[C_Y_p] * (P * b / 2) * hrv + c[C_Y_r] * (Rr * b / 2) * hrv) * S;
+            T Cl = c[C_l_0] + c[C_l_beta] * beta + c[C_l_delta_a] * delta_a + c[C_l_delta_r] * delta_r;
+            T Cm = (1 - sigma) * (c[C_m_0] + c[C_m_alpha] * alpha) + sigma * T(Cm_post) * shape + c[C_m_delta_e] * delta_e;
+            T Cn = c[C_n_0] + c[C_n_beta] * beta + c[C_n_delta_a] * delta_a + c[C_n_delta_r] * delta_r;
+            // lift and drag in the stability axes, as aerosonde
+            f[0] = lift * sa - drag * ca;
+            f[1] = side;
+            f[2] = -lift * ca - drag * sa;
+            m[0] = (Cl * dyn + c[C_l_p] * (P * b / 2) * hrv + c[C_l_r] * (Rr * b / 2) * hrv) * S * b;
+            m[1] = (Cm * dyn + c[C_m_q] * (Q * cbar / 2) * hrv) * S * cbar;
+            m[2] = (Cn * dyn + c[C_n_p] * (P * b / 2) * hrv + c[C_n_r] * (Rr * b / 2) * hrv) * S * b;
+        }
+        force[0] = f[0]; force[1] = -f[1]; force[2] = -f[2];  // FRD -> FLU
+        moment[0] = m[0]; moment[1] = -m[1]; moment[2] = -m[2];
+        // propeller on the thrust line through the center of gravity, in FLU; the thrust randomization factor scales
+        // thrust and torque together
+        T thrust, torque, n, static_thrust, static_torque, static_n;
+        T v_axial = a.v_frd[0];
+        eratix_propeller(p.air_density, x.actuators[THROTTLE], v_axial, thrust, torque, n);
+        eratix_propeller(p.air_density, T(1), T(0), static_thrust, static_torque, static_n);
+        T scale = p.thrust_max / static_thrust;
+        force[0] += scale * thrust;
+        moment[0] += -T(rotation) * scale * torque;  // reaction of the propeller's drag torque
+        // the spinning rotor's angular momentum H along x: the airframe feels -w x H (gyroscopic moment)
+        T H = T(rotation) * T(rotor_inertia) * T(2 * PI) * n;
+        moment[1] += -w[2] * H;
+        moment[2] += w[1] * H;
+    }
+
+    template <typename T>
     void aerodynamics(const Parameters<T>& p, const Body<T>& x, T force[3], T moment[3]){
         // aerodynamic + propulsion force and moment in the body frame (x forward, y left, z up)
         if constexpr(FW_AIRPLANE == 1){
             advanced_aerodynamics(p, x, force, moment);
+            return;
+        }
+        if constexpr(FW_AIRPLANE == 2){
+            eratix_aerodynamics(p, x, force, moment);
             return;
         }
         const T* c = p.aerodynamics;
@@ -703,6 +879,7 @@ namespace fixed_wing{
     template <typename T>
     void task_parameters(const TaskConfig<T>& config, Parameters<T>& p){
         if constexpr(FW_AIRPLANE == 1) advanced_plane(p);
+        else if constexpr(FW_AIRPLANE == 2) eratix(p);
         else aerosonde(p);
         p.dt = 1 / config.frequency;
         p.n_substeps = config.n_substeps;

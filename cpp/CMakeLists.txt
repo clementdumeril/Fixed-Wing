@@ -158,6 +158,21 @@ target_link_libraries(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 PRIV
 target_compile_definitions(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 PRIVATE FW_CRITIC_HIDDEN=64 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2 FW_TD3=1 FW_EXPLORATION_NOISE=0.05)
 list(APPEND TRAIN_TARGETS train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005)
 
+# the lab's E-flite UMX Eratix 3D FF 450 mm (FW_AIRPLANE=2, docs/eratix_model.md) with the current best recipe of the
+# advanced_plane: SAC, critic 128, batch 256, the L2F update intervals (critics every 10 steps, actor every 20)
+add_executable(train_sac_c128_b256_tracking_g995_eratix_i10a20 src/train_sac.cpp)
+target_include_directories(train_sac_c128_b256_tracking_g995_eratix_i10a20 PRIVATE include)
+target_link_libraries(train_sac_c128_b256_tracking_g995_eratix_i10a20 PRIVATE RLtools::RLtools)
+target_compile_definitions(train_sac_c128_b256_tracking_g995_eratix_i10a20 PRIVATE FW_CRITIC_HIDDEN=128 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=2 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2)
+list(APPEND TRAIN_TARGETS train_sac_c128_b256_tracking_g995_eratix_i10a20)
+
+# trim, thrust, stall speed, linear modes and a hands-off flight of the Eratix model
+add_executable(eratix_trim src/eratix_trim.cpp)
+target_include_directories(eratix_trim PRIVATE include)
+target_link_libraries(eratix_trim PRIVATE RLtools::RLtools)
+target_compile_definitions(eratix_trim PRIVATE FW_TRACKING=1 FW_AIRPLANE=2)
+list(APPEND TRAIN_TARGETS eratix_trim)
+
 # a flight of the deployed policy in Gazebo (deploy/ros2/fly_sitl.sh) against this simulator
 add_executable(compare_sitl src/compare_sitl.cpp)
 target_include_directories(compare_sitl PRIVATE include deploy/ros2/fw_policy/policy)
