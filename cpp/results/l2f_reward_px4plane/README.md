@@ -33,6 +33,27 @@ rewards match the stored ones to 4e-7 (`reward_check.txt`).
 - 4 seeds, another machine and compiler than the reference: to be confirmed on 10 seeds, and with TD3, whose
   bang-bang commands may come from the flat part of the tanh.
 
+## 10 seeds on Savio (job 40965874, `slurm/tracking_px4plane_l2freward.slurm`)
+
+`l2f-penalty` against our tanh reward, same recipe and seeds, the tanh runs from
+[`l2f_td3_px4plane`](../l2f_td3_px4plane/README.md) (same machine type):
+
+| 10 seeds | Flies after | Best: test A | Best: position | Best: velocity | Best: command change | Last: test A, position |
+| --- | --- | --- | --- | --- | --- | --- |
+| SAC 128, tanh | 515 k steps, 2.2 min | 99.7 ± 0.5 % | 12.9 ± 4.4 m | 1.71 ± 1.00 m/s | 0.036 | 94.9 %, 19.9 m |
+| **SAC 128, L2F reward** | **287 k, 1.2 min** | 98.8 ± 1.4 % | **9.8 ± 2.3 m** | **0.46 ± 0.21 m/s** | **0.022** | **96.8 %, 11.8 m** |
+| SAC 64, tanh | 687 k, 1.6 min | 98.6 ± 2.1 % | 12.7 ± 4.3 m | 2.36 ± 0.59 m/s | 0.105 | 92.6 %, 20.8 m |
+| SAC 64, L2F reward | 368 k, 0.8 min | 98.5 ± 1.6 % | 18.0 ± 7.7 m | 0.96 ± 0.59 m/s | 0.020 | 89.5 %, 14.3 m |
+| TD3 64, tanh | 293 k, 0.6 min | 98.5 ± 2.3 % | 13.3 ± 4.0 m | 2.72 m/s | 0.569 | 90.5 %, 18.8 m |
+| TD3 64, L2F reward | 398 k, 0.9 min | 97.7 ± 1.9 % | 17.4 ± 6.5 m | 1.71 m/s | 0.686 | 90.8 %, 13.5 m |
+
+- **SAC 128 with the L2F reward**: about the same success (98.8 against 99.7 %), a quarter less position error, a
+  velocity error 3.7 times smaller, smoother commands, flies in half the steps, and its last actor is almost as good as
+  its best one (96.8 %, 11.8 m against 94.9 %, 19.9 m with tanh): training is steadier.
+- SAC 64: velocity and smoothness better, position worse and more spread (18 ± 7.7 m).
+- **TD3 stays bang-bang** (0.35–1.0 per seed): the flat part of the tanh was not the cause.
+
 ## Files
 
-`<variant>_seed<k>/`: `config.json`, `progress.csv`, `checkpoints.csv`, `reward_check.txt`, `evaluation*.json`.
+`<variant>_seed<k>/` (lab PC, 4 seeds) and `savio_<variant>/seed<k>/` (Savio, 10 seeds): `config.json`,
+`progress.csv`, `checkpoints.csv`, `reward_check.txt`, `evaluation*.json`.
