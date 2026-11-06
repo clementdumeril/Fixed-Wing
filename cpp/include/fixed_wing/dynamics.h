@@ -789,6 +789,16 @@ namespace fixed_wing{
         T e_guided[3];
         for(int i = 0; i < 3; i++) e_guided[i] = e_velocity[i] + scale * c.velocity_guidance_gain * e_position[i];
         T velocity_error = norm3(e_guided);
+        if(c.l2f_form){
+            auto sq = [](T x){ return x * x; };
+            T margin = std::fmin(alpha_excess(alpha, c) / c.alpha_margin_scale, T(1));
+            T cost = c.position_weight * sq(position_error / c.position_scale)
+                   + c.velocity_weight * sq(velocity_error / c.velocity_scale)
+                   + c.sideslip_weight * sq(beta / c.sideslip_scale)
+                   + c.action_change_weight * action_change_squared
+                   + c.alpha_margin_weight * margin * margin;
+            return std::fmax(c.l2f_survival - cost, c.l2f_floor);
+        }
         T tracking = c.position_weight * tracking_cost(position_error / c.position_scale, c)
                    + c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);
         T far = std::fmin(position_error / c.far_position_scale, T(1)) + std::fmin(velocity_error / c.far_velocity_scale, T(1));
@@ -825,7 +835,7 @@ namespace fixed_wing{
     template <typename T>
     T reward(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS], const State<T>& next, const TaskConfig<T>& config){
         // on the state after the step; zero when the flight ends, as in FixedWingEnv.step
-        if(termination(p, next, config) != FLYING) return 0;
+        if(termination(p, next, config) != FLYING) return config.reward.l2f_form ? -config.reward.l2f_termination_penalty : 0;
         AirData<T> air = air_data(p, next.body);
         T change = 0, deviation = 0;
         for(int i = 0; i < N_ACTUATORS; i++){
@@ -849,7 +859,7 @@ namespace fixed_wing{
     template <typename T>
     T reward_from_critic_observations(const T* observation, const T* next_observation, const T* action, bool terminated, const RewardConfig<T>& c){
         // the reward of a stored transition, with new weights (curriculum): same as reward_from_observations in Python
-        if(terminated) return 0;
+        if(terminated) return c.l2f_form ? -c.l2f_termination_penalty : 0;
         const int n = ActorObservation<int>::DIM;
         const int critic = CriticObservation<int>::DIM;
         T alpha = next_observation[n] * T(0.3);

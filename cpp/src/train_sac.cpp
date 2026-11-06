@@ -27,6 +27,9 @@
 //   score is the RMS error of the completed flights (position, or course for the course task) + 10 per % of failed
 //   flights. The validation flights have their own random numbers, so training is the same as without the option
 //   --action-change-scale K: K times the weight of the command-change cost at every curriculum stage (default 1)
+//   --reward tanh|l2f|l2f-penalty: the reward form (default tanh, ours); l2f: the form and schedule of Learning to Fly
+//   in Seconds (survival 2 minus weighted squared errors, clipped at 0, weights grown every --curriculum-period);
+//   l2f-penalty: the same clipped at -2 with a termination penalty of 2 / (1 - gamma) (RewardConfig::l2f_form)
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
 // critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
@@ -220,7 +223,21 @@ struct Curriculum{
         target.sideslip_weight = 1.0;
         target.trim_weight = 0.3;
     }
+    // --reward l2f: the schedule of L2F (learning-to-fly src/steps/curriculum.h) instead of the gate: every period,
+    // unconditionally, the position weight x1.2 and the velocity and action weights x1.4, each up to a cap, and the
+    // stored rewards recomputed. L2F: position 2.5 to 20, velocity and action 0.005 to 0.5 (its errors are in meters
+    // within a 0.6 m box); here the same factors on weights sized for our scaled errors (the start values keep the
+    // reward of a start 50 m away near 0, as L2F's start costs stay below its survival reward)
+    bool l2f = false;
+    static constexpr T_ENV L2F_POSITION[2] = {0.3, 2.4}, L2F_VELOCITY[2] = {0.1, 1.0}, L2F_ACTION[2] = {0.05, 0.5};
     fixed_wing::RewardConfig<T_ENV> at_stage(int stage) const {
+        if(l2f){
+            fixed_wing::RewardConfig<T_ENV> c = initial;
+            c.position_weight = std::fmin(L2F_POSITION[0] * std::pow(T_ENV(1.2), stage), L2F_POSITION[1]);
+            c.velocity_weight = std::fmin(L2F_VELOCITY[0] * std::pow(T_ENV(1.4), stage), L2F_VELOCITY[1]);
+            c.action_change_weight = std::fmin(L2F_ACTION[0] * std::pow(T_ENV(1.4), stage), L2F_ACTION[1]);
+            return c;
+        }
         T_ENV x = T_ENV(std::min(stage, n_stages)) / n_stages;
         // a weight kept constant (0 for --no-trim-reward) stays as it is: 0 * (0 / 0)^x would be NaN
         auto geometric = [x](T_ENV a, T_ENV b){ return a == b ? a : a * std::pow(b / a, x); };
@@ -257,6 +274,29 @@ void recompute_rewards(DEVICE& device, RUNNER& runner, const fixed_wing::RewardC
             rlt::set(rb.rewards, i, 0, T(fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c)));
         }
     }
+}
+
+template <typename RUNNER>
+double reward_recomputation_error(const RUNNER& runner, const fixed_wing::RewardConfig<T_ENV>& c){
+    // largest difference between the stored rewards and the same rewards recomputed from the critic observations,
+    // as the curriculum does: it must be ~0 (float) for the recomputation to be the reward of the environment
+    constexpr TI N = ENVIRONMENT::ObservationPrivileged::DIM;
+    T_ENV o[N], o2[N], a[ENVIRONMENT::ACTION_DIM];
+    double worst = 0;
+    for(TI e = 0; e < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; e++){
+        const auto& rb = rlt::get(runner.replay_buffers, 0, e);
+        for(TI i = 0; i < filled(rb); i++){
+            for(TI j = 0; j < N; j++){
+                o[j] = rlt::get(rb.observations_privileged, i, j);
+                o2[j] = rlt::get(rb.next_observations_privileged, i, j);
+            }
+            for(TI j = 0; j < ENVIRONMENT::ACTION_DIM; j++) a[j] = rlt::get(rb.actions, i, j);
+            bool terminated = rlt::get(rb.terminated, i, 0) > T(0.5);
+            double r = fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c);
+            worst = std::max(worst, std::abs(r - double(rlt::get(rb.rewards, i, 0))));
+        }
+    }
+    return worst;
 }
 
 // what the curriculum gate and progress.csv follow: course error [deg], or distance to the reference [m] (tracking)
@@ -569,7 +609,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -590,6 +630,8 @@ int run(int argc, char** argv){
     TI curriculum_period = Curriculum{}.period;
     TI checkpoint_interval = 0;  // 0: no validation flights, only the final actor
     T_ENV action_change_scale = 1;  // times the weight of the command-change cost, at every curriculum stage
+    std::string reward_form = "tanh";  // tanh (ours), l2f (L2F form, floor 0), l2f-penalty (floor -2, termination penalty)
+    // (the check of the value is after the options)
     bool profile = false;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
@@ -604,6 +646,7 @@ int run(int argc, char** argv){
         else if(option == "--curriculum-period" && i + 1 < argc) curriculum_period = std::stoul(argv[++i]);
         else if(option == "--checkpoint-interval" && i + 1 < argc) checkpoint_interval = std::stoul(argv[++i]);
         else if(option == "--action-change-scale" && i + 1 < argc) action_change_scale = std::stod(argv[++i]);
+        else if(option == "--reward" && i + 1 < argc) reward_form = argv[++i];
         else if(option == "--no-trim-reward") trim_reward = false;
         else if(option == "--profile") profile = true;
         else throw std::runtime_error("unknown option " + option);
@@ -621,6 +664,7 @@ int run(int argc, char** argv){
     if(curriculum_period == 0 || curriculum_period % 10000 != 0) throw std::runtime_error("--curriculum-period must be a positive multiple of 10000");
     if(checkpoint_interval % N_ENVIRONMENTS != 0) throw std::runtime_error("--checkpoint-interval must be a multiple of the number of airplanes");
     if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
+    if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty") throw std::runtime_error("--reward must be tanh, l2f or l2f-penalty");
     std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"algorithm\": \""
         << (FW_TD3 ? "td3" : "sac") << "\",\n  \"steps\": " << steps
         << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH << ",\n  \"gamma\": " << FW_GAMMA
@@ -633,7 +677,7 @@ int run(int argc, char** argv){
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
         << ",\n  \"actor_training_interval\": " << FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR
-        << ",\n  \"action_change_scale\": " << action_change_scale
+        << ",\n  \"action_change_scale\": " << action_change_scale << ",\n  \"reward\": \"" << reward_form << "\""
         << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
         << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
@@ -659,6 +703,22 @@ int run(int argc, char** argv){
     if(!trim_reward){
         curriculum.initial.trim_weight = 0;
         curriculum.target.trim_weight = 0;
+    }
+    if(reward_form != "tanh"){
+        // the L2F reward form and schedule (RewardConfig::l2f_form, Curriculum::l2f); the tracking scales
+        // (--position-scale, velocity_scale), the velocity guidance and the stall margin stay as given
+        if(!FW_TRACKING) throw std::runtime_error("--reward l2f is for the tracking task");
+        curriculum.l2f = true;
+        curriculum.n_stages = 20;  // the caps are reached after 12 (position) and 7 (velocity, commands) stages
+        for(auto* c: {&curriculum.initial, &curriculum.target}){
+            c->l2f_form = true;
+            c->sideslip_weight = T_ENV(0.3);  // constant: L2F has no sideslip term, an airplane needs one
+            if(reward_form == "l2f-penalty"){
+                c->l2f_floor = -c->l2f_survival;
+                // ending a flight is never better than staying at the floor for the rest of it
+                c->l2f_termination_penalty = c->l2f_survival / (1 - T_ENV(FW_GAMMA));
+            }
+        }
     }
     for(int s = 0; s <= curriculum.n_stages; s++){
         auto c = curriculum.at_stage(s);
@@ -719,9 +779,15 @@ int run(int argc, char** argv){
                       << w.episode_return << "  " << TASK_ERROR_NAME << " " << w.task_error * TASK_ERROR_TO_UNIT << " "
                       << TASK_ERROR_UNIT << "  stage " << stage << "  " << std::setprecision(3) << step / elapsed << " steps/s" << std::endl;
         }
+        if(step == 20000){  // before the first curriculum change
+            double error = reward_recomputation_error(runner, curriculum.at_stage(stage));
+            std::ofstream(out_dir / "reward_check.txt") << "max |stored - recomputed reward| over the replay buffer at step 20000: " << error << "\n";
+            std::cout << "reward recomputation check: " << error << std::endl;
+        }
         if(step >= next_check){
             // a stage is taken only if the setpoint was tracked over the last period
-            if(fixed_stage < 0 && window(runner, curriculum.period).task_error < curriculum.advance_error && stage < curriculum.n_stages){
+            if(fixed_stage < 0 && (curriculum.l2f || window(runner, curriculum.period).task_error < curriculum.advance_error)
+               && stage < curriculum.n_stages){
                 stage++;
                 set_reward(curriculum.at_stage(stage));
                 recompute_rewards(device, runner, curriculum.at_stage(stage));

@@ -166,6 +166,15 @@ namespace fixed_wing{
         T far_position_scale = 100;  // m
         T far_velocity_scale = 15;  // m/s
 #endif
+        // the reward form of Learning to Fly in Seconds (--reward l2f) instead of the capped tanh above: survival
+        // minus a sum of weighted squared scaled errors (position, velocity toward the point, sideslip, command change,
+        // stall margin), not capped, clipped below at l2f_floor. The L2F errors stay below 0.6 m (its termination box),
+        // ours reach 300 m, so a floor is needed: either 0 (crashing never pays, but far from the point the reward is
+        // flat), or below 0 with a termination penalty at least as bad as staying at the floor forever
+        bool l2f_form = false;
+        T l2f_survival = 2;  // as L2F
+        T l2f_floor = 0;
+        T l2f_termination_penalty = 0;  // reward of the step that ends a flight (L2F: none, the flight just ends)
     };
 
     // how an episode starts (sample_initial_state)
