@@ -175,6 +175,12 @@ namespace fixed_wing{
         T l2f_survival = 2;  // as L2F
         T l2f_floor = 0;
         T l2f_termination_penalty = 0;  // reward of the step that ends a flight (L2F: none, the flight just ends)
+        // L2F form only: a cost linear in the distance, weight x (sqrt(d^2 + delta^2) - delta), with a slope of
+        // about the weight per meter everywhere beyond delta. The squared position cost is flat near the point (2 m
+        // cost 1 % of the best reward, 6 m 11 %) and the policies settled about 10 m away; this term pays for every
+        // meter closer, down to about delta
+        T position_l1_weight = 0;  // per meter
+        T position_l1_delta = 1;  // m
     };
 
     // how an episode starts (sample_initial_state)

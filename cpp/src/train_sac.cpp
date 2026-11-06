@@ -30,6 +30,7 @@
 //   --reward tanh|l2f|l2f-penalty: the reward form (default tanh, ours); l2f: the form and schedule of Learning to Fly
 //   in Seconds (survival 2 minus weighted squared errors, clipped at 0, weights grown every --curriculum-period);
 //   l2f-penalty: the same clipped at -2 with a termination penalty of 2 / (1 - gamma) (RewardConfig::l2f_form)
+//   --position-l1 W: with the L2F form, a cost of W per meter of distance to the point (RewardConfig::position_l1_weight)
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
 // critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
@@ -609,7 +610,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -630,6 +631,7 @@ int run(int argc, char** argv){
     TI curriculum_period = Curriculum{}.period;
     TI checkpoint_interval = 0;  // 0: no validation flights, only the final actor
     T_ENV action_change_scale = 1;  // times the weight of the command-change cost, at every curriculum stage
+    T_ENV position_l1 = 0;  // --position-l1 W: weight per meter of the linear distance term (L2F reward form only)
     std::string reward_form = "tanh";  // tanh (ours), l2f (L2F form, floor 0), l2f-penalty (floor -2, termination penalty)
     // (the check of the value is after the options)
     bool profile = false;
@@ -647,6 +649,7 @@ int run(int argc, char** argv){
         else if(option == "--checkpoint-interval" && i + 1 < argc) checkpoint_interval = std::stoul(argv[++i]);
         else if(option == "--action-change-scale" && i + 1 < argc) action_change_scale = std::stod(argv[++i]);
         else if(option == "--reward" && i + 1 < argc) reward_form = argv[++i];
+        else if(option == "--position-l1" && i + 1 < argc) position_l1 = std::stod(argv[++i]);
         else if(option == "--no-trim-reward") trim_reward = false;
         else if(option == "--profile") profile = true;
         else throw std::runtime_error("unknown option " + option);
@@ -665,6 +668,7 @@ int run(int argc, char** argv){
     if(checkpoint_interval % N_ENVIRONMENTS != 0) throw std::runtime_error("--checkpoint-interval must be a multiple of the number of airplanes");
     if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
     if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty") throw std::runtime_error("--reward must be tanh, l2f or l2f-penalty");
+    if(position_l1 != 0 && reward_form == "tanh") throw std::runtime_error("--position-l1 needs --reward l2f or l2f-penalty");
     std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"algorithm\": \""
         << (FW_TD3 ? "td3" : "sac") << "\",\n  \"steps\": " << steps
         << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH << ",\n  \"gamma\": " << FW_GAMMA
@@ -677,7 +681,7 @@ int run(int argc, char** argv){
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
         << ",\n  \"actor_training_interval\": " << FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR
-        << ",\n  \"action_change_scale\": " << action_change_scale << ",\n  \"reward\": \"" << reward_form << "\""
+        << ",\n  \"action_change_scale\": " << action_change_scale << ",\n  \"reward\": \"" << reward_form << "\"" << ",\n  \"position_l1_weight\": " << position_l1
         << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
         << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
@@ -712,6 +716,7 @@ int run(int argc, char** argv){
         curriculum.n_stages = 20;  // the caps are reached after 12 (position) and 7 (velocity, commands) stages
         for(auto* c: {&curriculum.initial, &curriculum.target}){
             c->l2f_form = true;
+            c->position_l1_weight = position_l1;  // constant over the curriculum
             c->sideslip_weight = T_ENV(0.3);  // constant: L2F has no sideslip term, an airplane needs one
             if(reward_form == "l2f-penalty"){
                 c->l2f_floor = -c->l2f_survival;
