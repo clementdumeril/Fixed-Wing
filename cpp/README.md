@@ -21,7 +21,7 @@ velocity. Gusts, turbulence, thermals and sensor noise are not ported yet.
 trim, and a full nose-up flight that stalls), replays the same commands from the same starts in C++ (`src/check.cpp`)
 and compares every step: 11 flights, 7136 steps, states within 7e-13, rewards within 8e-15, the same terminations, and
 observations within 1.2e-7 (Python stores them as float32). First trainings: [`results/`](results/README.md); network
-and batch size sweep on a Slurm cluster: [`results/sweep`](results/sweep/README.md). Batch 256 on the advanced_plane: [`results/batch_px4plane`](results/batch_px4plane/README.md). 3 M steps with the best checkpoint, and the curves in the format of Learning to Fly in Seconds: [`results/long_px4plane`](results/long_px4plane/README.md). The update rate of L2F (critics every 10 steps, actor every 20): [`results/l2f_intervals_px4plane`](results/l2f_intervals_px4plane/README.md). With the L2F critic size and with TD3: [`results/l2f_td3_px4plane`](results/l2f_td3_px4plane/README.md). Two attempts to smooth TD3's commands: [`results/td3_smooth_px4plane`](results/td3_smooth_px4plane/README.md). The reward form of L2F: [`results/l2f_reward_px4plane`](results/l2f_reward_px4plane/README.md). The first Eratix model on 10 seeds: [`results/eratix`](results/eratix/README.md). The best calm-air policy so far comes from
+and batch size sweep on a Slurm cluster: [`results/sweep`](results/sweep/README.md). Batch 256 on the advanced_plane: [`results/batch_px4plane`](results/batch_px4plane/README.md). 3 M steps with the best checkpoint, and the curves in the format of Learning to Fly in Seconds: [`results/long_px4plane`](results/long_px4plane/README.md). The update rate of L2F (critics every 10 steps, actor every 20): [`results/l2f_intervals_px4plane`](results/l2f_intervals_px4plane/README.md). With the L2F critic size and with TD3: [`results/l2f_td3_px4plane`](results/l2f_td3_px4plane/README.md). Two attempts to smooth TD3's commands: [`results/td3_smooth_px4plane`](results/td3_smooth_px4plane/README.md). The reward form of L2F: [`results/l2f_reward_px4plane`](results/l2f_reward_px4plane/README.md). The first Eratix model on 10 seeds: [`results/eratix`](results/eratix/README.md). The L2F-reward policies when the point accelerates (circles, figure-eights, speed changes): [`results/reference_suite`](results/reference_suite/README.md). The best calm-air policy so far comes from
 `train_sac` (critic 256, batch 256); `train_sac_c256_b64` is half the cost for a small loss.
 
 ## Build and run
@@ -72,6 +72,13 @@ step is about K times cheaper. `train_sac_c128_b256_tracking_g995_px4plane_i10a2
 Each run writes `evaluation.json` (the 100 Python test flights) and `evaluation_random.json` (100 random starts, the
 same for every run), the first 10 flights of each step by step (`flights.csv`, `flights_random.csv`) and the trained
 actor as C++ code (`actor.h`).
+
+`evaluate_reference <run>/best_actor.h <out_dir>` (advanced_plane tracking actors; the weights are read from the file,
+so one build serves every run) flies an actor when the point does not fly straight: circles, helices, the figure-eight
+of L2F and speed oscillations (`include/fixed_wing/reference_motion.h`), each with its acceleration swept, from the
+starts of test A and test B. It writes `reference_suite.json`, one row per flight in `flights_summary.csv` and a few
+flights per level in `flights/`; `tools/plot_reference_suite.py` averages runs and draws the figures. Training and the
+tests still move the point in a straight line.
 
 `-DRL_TOOLS_DIR=<checkout>` uses a local RLtools instead. Without a BLAS library RLtools falls back to plain loops and
 the networks dominate the run time (under 20 steps/s here); with Intel MKL on one laptop core the training runs at

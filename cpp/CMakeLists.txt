@@ -180,6 +180,15 @@ target_link_libraries(compare_sitl PRIVATE RLtools::RLtools)
 target_compile_definitions(compare_sitl PRIVATE FW_TRACKING=1 FW_AIRPLANE=1)
 list(APPEND TRAIN_TARGETS compare_sitl)
 
+# a trained tracking actor of the advanced_plane (actor.h or best_actor.h, read at run time) when the reference point
+# accelerates: circles, helices, figure-eights and speed oscillations, from level and random starts
+add_executable(evaluate_reference src/evaluate_reference.cpp)
+target_include_directories(evaluate_reference PRIVATE include)
+find_package(Threads REQUIRED)
+target_link_libraries(evaluate_reference PRIVATE RLtools::RLtools Threads::Threads)
+target_compile_definitions(evaluate_reference PRIVATE FW_TRACKING=1 FW_AIRPLANE=1)
+list(APPEND TRAIN_TARGETS evaluate_reference)
+
 if(NOT MSVC)
     foreach(target ${TRAIN_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)

@@ -902,18 +902,25 @@ namespace fixed_wing{
     }
 
     template <typename T>
+    void follow_reference(const Parameters<T>& p, const State<T>& state, State<T>& next){
+        // tracking task, once next.reference_position is where the point is after the step: the altitude setpoint
+        // follows it (termination on the altitude error), and the integral of the position error with forgetting (a
+        // steady offset builds up, the approach fades out)
+        next.setpoint_altitude = next.reference_position[2];
+        T e_position[3], e_velocity[3];
+        tracking_errors(next, e_position, e_velocity);
+        T keep = std::exp(-p.dt / p.position_integral_time);
+        for(int i = 0; i < 3; i++) next.error_integral[i] = keep * state.error_integral[i] + e_position[i] * p.dt;
+    }
+
+    template <typename T>
     void simulate_task(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS], State<T>& next){
         // simulate, then the error integrals: they need the setpoint, so they belong to the task, not to the physics
         simulate(p, state, action, next);
         if constexpr(FW_TRACKING){
-            // the reference moves on; the altitude setpoint follows it (termination on the altitude error)
+            // the reference moves on in a straight line at its constant velocity (training and the tests)
             for(int i = 0; i < 3; i++) next.reference_position[i] = state.reference_position[i] + state.reference_velocity[i] * p.dt;
-            next.setpoint_altitude = next.reference_position[2];
-            // integral of the position error with forgetting: a steady offset builds up, the approach fades out
-            T e_position[3], e_velocity[3];
-            tracking_errors(next, e_position, e_velocity);
-            T keep = std::exp(-p.dt / p.position_integral_time);
-            for(int i = 0; i < 3; i++) next.error_integral[i] = keep * state.error_integral[i] + e_position[i] * p.dt;
+            follow_reference(p, state, next);
         }
         else{
             Measurements<T> m = measurements(p, next.body);
@@ -924,6 +931,21 @@ namespace fixed_wing{
                 next.error_integral[i] = clip(state.error_integral[i] + e[i] * p.dt, -limit, limit);
             }
         }
+    }
+
+    template <typename T>
+    void simulate_task(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS],
+                       const T reference_position[3], const T reference_velocity[3], State<T>& next){
+        // tracking task with a reference that does not fly straight (reference_motion.h, evaluation only): the point is
+        // given after the step, with its velocity, which the actor observes. The setpoints follow it, as at the start
+        simulate(p, state, action, next);
+        for(int i = 0; i < 3; i++){
+            next.reference_position[i] = reference_position[i];
+            next.reference_velocity[i] = reference_velocity[i];
+        }
+        next.setpoint_airspeed = norm3(reference_velocity);
+        next.setpoint_course = std::atan2(reference_velocity[1], reference_velocity[0]);
+        follow_reference(p, state, next);
     }
 
     template <typename T>
