@@ -1,0 +1,15 @@
+{
+  "episodes": 100,
+  "success_rate": 1,
+  "mean_return": 831.3544383,
+  "max_return": 1500,
+  "failures": {},
+  "airspeed_rmse": 0.5668584404,
+  "altitude_rmse": 2.431985244,
+  "course_rmse_deg": 7.142050076,
+  "position_rmse": 10.73543922,
+  "velocity_rmse": 1.411879392,
+  "mean_action_change": 0.2791671403,
+  "failures_within_5_s": 0,
+  "failed_flights_mean_max_bank_deg": 0
+}
