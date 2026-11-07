@@ -798,7 +798,8 @@ namespace fixed_wing{
                    + c.action_change_weight * action_change_squared
                    + c.alpha_margin_weight * margin * margin
                    + c.position_l1_weight * (std::sqrt(position_error * position_error + c.position_l1_delta * c.position_l1_delta) - c.position_l1_delta);
-            return std::fmax(c.l2f_survival - cost, c.l2f_floor);
+            T bonus = c.position_bonus_weight * std::exp(-sq(position_error / c.position_bonus_scale));
+            return std::fmax(c.l2f_survival - cost + bonus, c.l2f_floor);
         }
         T tracking = c.position_weight * tracking_cost(position_error / c.position_scale, c)
                    + c.velocity_weight * tracking_cost(velocity_error / c.velocity_scale, c);

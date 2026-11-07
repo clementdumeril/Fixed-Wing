@@ -181,6 +181,12 @@ namespace fixed_wing{
         // meter closer, down to about delta
         T position_l1_weight = 0;  // per meter
         T position_l1_delta = 1;  // m
+        // L2F form only: a bonus for being close to the point, weight x exp(-(d / scale)^2), added before the floor.
+        // It pays only near the point, so it changes nothing far from it, and the curriculum shrinks its scale
+        // (Curriculum::l2f: from position_bonus_scale0 down to position_bonus_scale_min) so that the policy is asked to
+        // be within about 10 m first, then within about 1 m, whatever the motion of the point
+        T position_bonus_weight = 0;
+        T position_bonus_scale = 10;  // m, set by the curriculum
     };
 
     // how an episode starts (sample_initial_state)
