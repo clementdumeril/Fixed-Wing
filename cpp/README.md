@@ -116,6 +116,7 @@ sbatch slurm/tracking_eratix.slurm           # the Eratix model with the best re
 sbatch slurm/tracking_px4plane_l2freward.slurm # the reward form of L2F: SAC critic 128, TD3 and SAC critic 64, 10 seeds each
 sbatch slurm/tracking_px4plane_precision.slurm # the L2F reward with a linear distance cost and a stronger velocity correction, 10 seeds each
 sbatch slurm/tracking_px4plane_precision2.slurm # a closeness bonus with a shrinking scale, a stronger velocity correction, the position-error integral, 10 seeds each
+sbatch slurm/tracking_px4plane_precision3.slurm # the closeness bonus with a fixed (10 m, 5 m) or adaptive scale, 10 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.

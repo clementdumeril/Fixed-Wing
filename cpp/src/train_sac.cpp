@@ -32,7 +32,8 @@
 //   l2f-penalty: the same clipped at -2 with a termination penalty of 2 / (1 - gamma) (RewardConfig::l2f_form)
 //   --position-l1 W: with the L2F form, a cost of W per meter of distance to the point (RewardConfig::position_l1_weight)
 //   --position-bonus W [--position-bonus-scale S0 MIN]: with the L2F form, a bonus W exp(-(d / s)^2) for being close to
-//   the point, its scale s shrunk by the curriculum from S0 (default 10 m) to MIN (1 m) (RewardConfig::position_bonus_weight)
+//   the point, its scale s shrunk by the curriculum from S0 (default 10 m) to MIN (1 m) (RewardConfig::position_bonus_weight);
+//   --position-bonus-adaptive F: the scale follows F x the mean training distance to the point instead (never growing)
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
 // critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
@@ -235,13 +236,18 @@ struct Curriculum{
     static constexpr T_ENV L2F_POSITION[2] = {0.3, 2.4}, L2F_VELOCITY[2] = {0.1, 1.0}, L2F_ACTION[2] = {0.05, 0.5};
     // the scale of the closeness bonus: x0.85 per stage, from 10 m to 1 m in 14 stages
     T_ENV bonus_scale0 = 10, bonus_scale_min = 1;
+    // --position-bonus-adaptive F > 0: instead of the schedule, at every curriculum check the scale becomes F times
+    // the mean distance to the point over the last period of training flights (never larger than before, never below
+    // bonus_scale_min), so that the bonus always reaches where the policy flies. bonus_scale is its current value
+    T_ENV bonus_adaptive = 0, bonus_scale = 10;
     fixed_wing::RewardConfig<T_ENV> at_stage(int stage) const {
         if(l2f){
             fixed_wing::RewardConfig<T_ENV> c = initial;
             c.position_weight = std::fmin(L2F_POSITION[0] * std::pow(T_ENV(1.2), stage), L2F_POSITION[1]);
             c.velocity_weight = std::fmin(L2F_VELOCITY[0] * std::pow(T_ENV(1.4), stage), L2F_VELOCITY[1]);
             c.action_change_weight = std::fmin(L2F_ACTION[0] * std::pow(T_ENV(1.4), stage), L2F_ACTION[1]);
-            c.position_bonus_scale = std::fmax(bonus_scale0 * std::pow(T_ENV(0.85), stage), bonus_scale_min);
+            c.position_bonus_scale = bonus_adaptive > 0 ? bonus_scale
+                                   : std::fmax(bonus_scale0 * std::pow(T_ENV(0.85), stage), bonus_scale_min);
             return c;
         }
         T_ENV x = T_ENV(std::min(stage, n_stages)) / n_stages;
@@ -615,7 +621,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -638,6 +644,7 @@ int run(int argc, char** argv){
     T_ENV action_change_scale = 1;  // times the weight of the command-change cost, at every curriculum stage
     T_ENV position_bonus = 0;  // --position-bonus W: weight of the closeness bonus (L2F reward form only)
     T_ENV bonus_scale0 = 10, bonus_scale_min = 1;  // --position-bonus-scale S0 MIN
+    T_ENV bonus_adaptive = 0;  // --position-bonus-adaptive F
     T_ENV position_l1 = 0;  // --position-l1 W: weight per meter of the linear distance term (L2F reward form only)
     std::string reward_form = "tanh";  // tanh (ours), l2f (L2F form, floor 0), l2f-penalty (floor -2, termination penalty)
     // (the check of the value is after the options)
@@ -658,6 +665,7 @@ int run(int argc, char** argv){
         else if(option == "--reward" && i + 1 < argc) reward_form = argv[++i];
         else if(option == "--position-l1" && i + 1 < argc) position_l1 = std::stod(argv[++i]);
         else if(option == "--position-bonus" && i + 1 < argc) position_bonus = std::stod(argv[++i]);
+        else if(option == "--position-bonus-adaptive" && i + 1 < argc) bonus_adaptive = std::stod(argv[++i]);
         else if(option == "--position-bonus-scale" && i + 2 < argc){ bonus_scale0 = std::stod(argv[++i]); bonus_scale_min = std::stod(argv[++i]); }
         else if(option == "--no-trim-reward") trim_reward = false;
         else if(option == "--profile") profile = true;
@@ -691,7 +699,7 @@ int run(int argc, char** argv){
         << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
         << ",\n  \"actor_training_interval\": " << FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR
-        << ",\n  \"action_change_scale\": " << action_change_scale << ",\n  \"reward\": \"" << reward_form << "\"" << ",\n  \"position_l1_weight\": " << position_l1 << ",\n  \"position_bonus_weight\": " << position_bonus << ",\n  \"position_bonus_scale\": [" << bonus_scale0 << ", " << bonus_scale_min << "]"
+        << ",\n  \"action_change_scale\": " << action_change_scale << ",\n  \"reward\": \"" << reward_form << "\"" << ",\n  \"position_l1_weight\": " << position_l1 << ",\n  \"position_bonus_weight\": " << position_bonus << ",\n  \"position_bonus_scale\": [" << bonus_scale0 << ", " << bonus_scale_min << "]" << ",\n  \"position_bonus_adaptive\": " << bonus_adaptive
         << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
         << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
@@ -725,6 +733,8 @@ int run(int argc, char** argv){
         curriculum.l2f = true;
         curriculum.bonus_scale0 = bonus_scale0;
         curriculum.bonus_scale_min = bonus_scale_min;
+        curriculum.bonus_adaptive = bonus_adaptive;
+        curriculum.bonus_scale = bonus_scale0;
         curriculum.n_stages = 20;  // the caps are reached after 12 (position) and 7 (velocity, commands) stages
         for(auto* c: {&curriculum.initial, &curriculum.target}){
             c->l2f_form = true;
@@ -759,7 +769,7 @@ int run(int argc, char** argv){
 
     std::ofstream progress(out_dir / "progress.csv");
     progress << "time/total_timesteps,rollout/ep_len_mean,rollout/ep_rew_mean,"
-             << (FW_TRACKING ? "train/position_error_m" : "train/course_error_deg") << ",curriculum/stage,time/time_elapsed\n";
+             << (FW_TRACKING ? "train/position_error_m" : "train/course_error_deg") << ",curriculum/stage,time/time_elapsed,curriculum/bonus_scale\n";
     auto start = std::chrono::steady_clock::now();
     auto& runner = ts.off_policy_runner;
     TI next_check = curriculum.period;
@@ -792,7 +802,7 @@ int run(int argc, char** argv){
             Window w = window(runner, 50000);
             double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             progress << step << "," << w.episode_length << "," << w.episode_return << "," << w.task_error * TASK_ERROR_TO_UNIT
-                     << "," << stage << "," << elapsed << std::endl;
+                     << "," << stage << "," << elapsed << "," << curriculum.at_stage(stage).position_bonus_scale << std::endl;
             std::cout << "step " << step << "  episode length " << std::setprecision(4) << w.episode_length << "  return "
                       << w.episode_return << "  " << TASK_ERROR_NAME << " " << w.task_error * TASK_ERROR_TO_UNIT << " "
                       << TASK_ERROR_UNIT << "  stage " << stage << "  " << std::setprecision(3) << step / elapsed << " steps/s" << std::endl;
@@ -804,9 +814,20 @@ int run(int argc, char** argv){
         }
         if(step >= next_check){
             // a stage is taken only if the setpoint was tracked over the last period
+            bool changed = false;
             if(fixed_stage < 0 && (curriculum.l2f || window(runner, curriculum.period).task_error < curriculum.advance_error)
                && stage < curriculum.n_stages){
                 stage++;
+                changed = true;
+            }
+            if(curriculum.l2f && curriculum.bonus_adaptive > 0){
+                T_ENV scale = std::fmax(std::fmin(curriculum.bonus_scale,
+                                                  curriculum.bonus_adaptive * T_ENV(window(runner, curriculum.period).task_error)),
+                                        curriculum.bonus_scale_min);
+                changed = changed || scale != curriculum.bonus_scale;
+                curriculum.bonus_scale = scale;
+            }
+            if(changed){
                 set_reward(curriculum.at_stage(stage));
                 recompute_rewards(device, runner, curriculum.at_stage(stage));
             }
