@@ -22,3 +22,20 @@ Behind / lateral: in the frame of the point, over the second half of the complet
 - Next: a stronger correction still (K = 0.5 and 1.0 /s), then the integral of the position error in the observation.
 
 `<variant>/seed<k>/`: `config.json`, `progress.csv`, `checkpoints.csv`, `reward_check.txt`, `evaluation*.json`.
+
+## Second run (job 41004772, `slurm/tracking_px4plane_precision2.slurm`)
+
+| 10 seeds, best checkpoint | Test A | Test B | Position RMS | Behind the point | Lateral RMS | Flights under 5 m |
+| --- | --- | --- | --- | --- | --- | --- |
+| K 0.3 (first run, best so far) | 98.7 % | 97.2 % | **6.6 ± 1.6 m** | 3.2 m | 4.6 m | 31 % |
+| `guidance05`: K 0.5 | 98.6 % | 98.0 % | 9.1 ± 5.6 m | 5.6 m | 6.7 m | 26 % |
+| `bonus_guidance01`: closeness bonus, K 0.1 | 99.1 % | 97.2 % | 10.1 ± 2.5 m | 4.7 m | 6.4 m | 13 % |
+| `bonus_guidance03`: closeness bonus, K 0.3 | 99.1 % | 97.0 % | 8.3 ± 2.4 m | 5.2 m | 5.9 m | 25 % |
+| `bonus_guidance03_integral`: + error integral | 98.6 % | 97.3 % | 8.0 ± 1.3 m | 4.2 m | 5.1 m | 17 % |
+
+- **No variant beats K 0.3**; K 0.5 is worse and more spread across seeds.
+- **The closeness bonus was not really tested**: its scale shrank on a fixed schedule (x0.85 per 100 k steps, 1 m from
+  1.4 M steps) while the training flights were still 10–40 m from the point on average, so exp(−(d / s)²) was about 0
+  for the whole training (`progress.csv`: train/position_error_m against curriculum/stage). The scale has to follow the
+  distance the policy actually reaches, or stay fixed.
+- The position-error integral does not remove the offset either (4.2 m behind against 5.2 m without it).
