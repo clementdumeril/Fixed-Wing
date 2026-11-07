@@ -150,6 +150,14 @@ foreach(algorithm sac td3)
     list(APPEND TRAIN_TARGETS ${target})
 endforeach()
 
+# the L2F recipe (SAC, critic 128) with the integral of the position error in the observation (65 values instead of
+# 62), to remove the steady offset to the point (results/precision_px4plane)
+add_executable(train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral src/train_sac.cpp)
+target_include_directories(train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral PRIVATE include)
+target_link_libraries(train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral PRIVATE RLtools::RLtools)
+target_compile_definitions(train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral PRIVATE FW_CRITIC_HIDDEN=128 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2 FW_ERROR_INTEGRAL=1)
+list(APPEND TRAIN_TARGETS train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral)
+
 # TD3 as above with half the exploration noise (0.05 instead of 0.1): its policies switched the surfaces between their
 # limits at about the control rate (results/l2f_td3_px4plane)
 add_executable(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 src/train_sac.cpp)

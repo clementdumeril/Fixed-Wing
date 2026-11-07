@@ -115,6 +115,7 @@ sbatch slurm/tracking_px4plane_td3_smooth.slurm # TD3 with 10x the command-chang
 sbatch slurm/tracking_eratix.slurm           # the Eratix model with the best recipe (SAC, L2F intervals), 4M steps, 10 seeds
 sbatch slurm/tracking_px4plane_l2freward.slurm # the reward form of L2F: SAC critic 128, TD3 and SAC critic 64, 10 seeds each
 sbatch slurm/tracking_px4plane_precision.slurm # the L2F reward with a linear distance cost and a stronger velocity correction, 10 seeds each
+sbatch slurm/tracking_px4plane_precision2.slurm # stronger velocity correction (K 0.5, 1.0) and the integral of the position error, 10 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
