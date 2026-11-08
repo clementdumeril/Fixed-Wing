@@ -12,6 +12,12 @@
 #ifndef FW_ERROR_INTEGRAL
 #define FW_ERROR_INTEGRAL 0
 #endif
+// 1: tracking task, the position error also observed on a fine scale, tanh(error / fine_position_scale) in the body
+// frame (3 more values), so that a few meters of error change the commands as much as tens of meters do on the main
+// scale of 20 m (train_sac_*_fine; results/near_px4plane: the error left is a steady offset of 3-4 m)
+#ifndef FW_FINE_POSITION
+#define FW_FINE_POSITION 0
+#endif
 // 1: position and velocity tracking (train_sac_*_tracking): a reference point moves in a straight line at constant
 // velocity, and the airplane has to reach it and follow it. 0: airspeed, altitude and course setpoints (Python task).
 #ifndef FW_TRACKING
@@ -34,6 +40,7 @@ namespace fixed_wing{
     constexpr int MAX_LATENCY = 4;
     constexpr int ACTION_HISTORY = 10;
     constexpr int N_INTEGRALS = FW_ERROR_INTEGRAL ? 3 : 0;
+    constexpr int N_FINE = FW_FINE_POSITION ? 3 : 0;
     // errors at the start of the observation: airspeed, altitude, sin and cos of course; or position and velocity
     constexpr int N_TASK_ERRORS = FW_TRACKING ? 6 : 4;
 
@@ -70,6 +77,7 @@ namespace fixed_wing{
         T error_integral_limits[3];  // m, m s, rad s (TaskConfig)
         T position_integral_time;  // s, tracking task (TaskConfig)
         T position_integral_scale;  // m s
+        T fine_position_scale;  // m, tracking task with FW_FINE_POSITION (TaskConfig)
         // randomization factors, kept for the critic: mass, inertia, thrust, actuator time, then the 28 coefficients
         T randomization[4 + N_COEFFICIENTS];
     };
@@ -263,6 +271,8 @@ namespace fixed_wing{
         // (up to 50 m for a few seconds) leaves it within about 10 s; a steady 20 m offset gives 200 m s, observed as 1
         T position_integral_time = 10;  // s
         T position_integral_scale = 200;  // m s
+        // tracking task with FW_FINE_POSITION: scale of the fine position error, tanh(error / scale)
+        T fine_position_scale = 2;  // m
         // tracking task: the reference starts up to 50 m away horizontally and 15 m vertically, flies at 20-28 m/s
         // within 90 deg of the airplane's heading, and climbs or descends at up to 1 m/s inside 40-140 m of altitude.
         // Eratix: the same task at its scale. It flies 7-10 m/s (cruise near 8 m/s), turns on a radius of about 6 m at
@@ -303,7 +313,7 @@ namespace fixed_wing{
     // observation tags for RLtools: what the actor sees (PX4 estimates + last actions) and what the critic sees
     template <typename TI>
     struct ActorObservation{
-        static constexpr TI DIM = N_TASK_ERRORS + 16 + N_INTEGRALS + N_ACTUATORS * ACTION_HISTORY;
+        static constexpr TI DIM = N_TASK_ERRORS + 16 + N_INTEGRALS + N_FINE + N_ACTUATORS * ACTION_HISTORY;
     };
     template <typename TI>
     struct CriticObservation{

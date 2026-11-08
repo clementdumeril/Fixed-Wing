@@ -158,6 +158,14 @@ target_link_libraries(train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral
 target_compile_definitions(train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral PRIVATE FW_CRITIC_HIDDEN=128 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2 FW_ERROR_INTEGRAL=1)
 list(APPEND TRAIN_TARGETS train_sac_c128_b256_tracking_g995_px4plane_i10a20_integral)
 
+# the L2F recipe with the position error also observed on a fine scale (65 values instead of 62), so that a few meters
+# of error count in the commands (results/near_px4plane: the error left is a steady offset of 3-4 m)
+add_executable(train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine src/train_sac.cpp)
+target_include_directories(train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine PRIVATE include)
+target_link_libraries(train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine PRIVATE RLtools::RLtools)
+target_compile_definitions(train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine PRIVATE FW_CRITIC_HIDDEN=128 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2 FW_FINE_POSITION=1)
+list(APPEND TRAIN_TARGETS train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine)
+
 # TD3 as above with half the exploration noise (0.05 instead of 0.1): its policies switched the surfaces between their
 # limits at about the control rate (results/l2f_td3_px4plane)
 add_executable(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 src/train_sac.cpp)

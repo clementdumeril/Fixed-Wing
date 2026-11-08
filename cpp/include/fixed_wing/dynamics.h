@@ -722,6 +722,13 @@ namespace fixed_wing{
                 for(int i = 0; i < 3; i++) write(k++, s.error_integral[i] / p.error_integral_limits[i]);
             }
         }
+        if constexpr(N_FINE > 0 && FW_TRACKING){
+            // the position error again, body frame, on a fine scale: slope 1 / fine_position_scale near the point
+            T e_position[3], e_velocity[3], body[3];
+            tracking_errors(s, e_position, e_velocity);
+            rotate_inverse(m.R, e_position, body);
+            for(int i = 0; i < 3; i++) write(k++, std::tanh(body[i] / p.fine_position_scale));
+        }
         for(int h = 0; h < ACTION_HISTORY; h++) for(int i = 0; i < N_ACTUATORS; i++) write(k++, s.action_history[h][i]);
     }
 
@@ -900,6 +907,7 @@ namespace fixed_wing{
         for(int i = 0; i < 3; i++) p.error_integral_limits[i] = config.error_integral_limits[i];
         p.position_integral_time = config.position_integral_time;
         p.position_integral_scale = config.position_integral_scale;
+        p.fine_position_scale = config.fine_position_scale;
     }
 
     template <typename T>
