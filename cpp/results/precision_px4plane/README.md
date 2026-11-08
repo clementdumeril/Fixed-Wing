@@ -39,3 +39,23 @@ Behind / lateral: in the frame of the point, over the second half of the complet
   for the whole training (`progress.csv`: train/position_error_m against curriculum/stage). The scale has to follow the
   distance the policy actually reaches, or stay fixed.
 - The position-error integral does not remove the offset either (4.2 m behind against 5.2 m without it).
+
+## Third run (job 41005709, `slurm/tracking_px4plane_precision3.slurm`): the closeness bonus with a fixed or adaptive scale
+
+K = 0.3, bonus weight 1. Best checkpoint (chosen by the validation score) and last actor, test A:
+
+| 10 seeds | Best: test A, B | Best: position | Last: test A | Last: position | Last: behind, lateral | Last: flights under 5 m |
+| --- | --- | --- | --- | --- | --- | --- |
+| K 0.3, no bonus (first run) | 98.7, 97.2 % | **6.6 ± 1.6 m** | 97.0 % | 7.7 ± 1.9 m | 3.1, 5.2 m | 23 % |
+| `bonus10m`: scale fixed at 10 m | 99.0, 98.1 % | 8.4 ± 1.8 m | 95.6 % | 8.5 ± 2.3 m | 4.2, 5.7 m | 19 % |
+| `bonus5m`: scale fixed at 5 m | 98.9, 96.6 % | 9.2 ± 5.4 m | 96.2 % | 7.1 ± 1.0 m | 3.1, 4.7 m | 27 % |
+| `bonus_adaptive`: half the training distance | 98.9, 98.4 % | 10.9 ± 5.0 m | 95.6 % | **6.7 ± 1.7 m** | 3.4, 4.2 m | **39 %** |
+
+- **The bonus does not beat K 0.3 alone**: the best last actors (adaptive scale, 6.7 m, 39 % under 5 m) are at the level
+  of K 0.3, within the spread between seeds. Reward shaping near the point has reached about 5–7 m.
+- **The checkpoint choice now hides precision**: the validation score counts 1 % of failed flights as 10 m, so it keeps
+  the safest checkpoint, not the most precise (bonus_adaptive: 10.9 m for the kept actor, 6.7 m for the last one). On
+  the validation flights, the most precise checkpoint with at least 97 % success after 1 M steps is at 5.1–6.5 m for
+  every variant (optimistic: chosen and measured on the same flights).
+- The adaptive scale followed the training distance (`progress.csv`, column curriculum/bonus_scale): 17.6 m at 0.5 M
+  steps, 5.1 m at 2 M, 3.6 m at 4 M.
