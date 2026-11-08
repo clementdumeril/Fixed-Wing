@@ -276,6 +276,10 @@ namespace fixed_wing{
         // direction of the point from the airplane at the start, relative to the airplane's course: 180 deg is anywhere
         // around it (about half the starts put the point behind, which takes steep turns to reach); 45 deg is ahead
         T reference_bearing_max = T(3.141592653589793);  // rad
+        // share of the starts with the point close (training only, --near-start): within reference_near_offset_max
+        // horizontally and vertically, so that more of the training is spent following the point rather than joining it
+        T reference_near_fraction = 0;
+        T reference_near_offset_max = 5;  // m
 #if FW_AIRPLANE == 2
         T reference_altitude_offset_max = 5;  // m
         T reference_speed_range[2] = {7, 10};  // m/s, horizontal

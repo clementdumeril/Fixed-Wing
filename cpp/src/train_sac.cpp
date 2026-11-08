@@ -34,6 +34,8 @@
 //   --position-bonus W [--position-bonus-scale S0 MIN]: with the L2F form, a bonus W exp(-(d / s)^2) for being close to
 //   the point, its scale s shrunk by the curriculum from S0 (default 10 m) to MIN (1 m) (RewardConfig::position_bonus_weight);
 //   --position-bonus-adaptive F: the scale follows F x the mean training distance to the point instead (never growing)
+//   --near-start F D: tracking task, a share F of the training starts puts the point within D m (horizontally and
+//   vertically) instead of 50 m; the airplane state is drawn as usual. Validation and test flights are unchanged
 // steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
 // train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
 // critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
@@ -621,7 +623,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -638,6 +640,7 @@ int run(int argc, char** argv){
     T_ENV position_scale = defaults.position_scale, position_linear = defaults.position_linear_weight;
     T_ENV guidance = defaults.velocity_guidance_gain;
     T_ENV bearing_max_deg = 180;
+    T_ENV near_fraction = 0, near_offset = 5;  // --near-start F D
     int fixed_stage = -1;  // >= 0: no curriculum, the reward weights of that stage from the start
     TI curriculum_period = Curriculum{}.period;
     TI checkpoint_interval = 0;  // 0: no validation flights, only the final actor
@@ -656,6 +659,7 @@ int run(int argc, char** argv){
         else if(option == "--position-linear" && i + 1 < argc) position_linear = std::stod(argv[++i]);
         else if(option == "--velocity-guidance" && i + 1 < argc) guidance = std::stod(argv[++i]);
         else if(option == "--reference-bearing-max" && i + 1 < argc) bearing_max_deg = std::stod(argv[++i]);
+        else if(option == "--near-start" && i + 2 < argc){ near_fraction = std::stod(argv[++i]); near_offset = std::stod(argv[++i]); }
         else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
         else if(option == "--curriculum-stage" && i + 1 < argc) fixed_stage = std::stoi(argv[++i]);
@@ -686,6 +690,7 @@ int run(int argc, char** argv){
     if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
     if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty") throw std::runtime_error("--reward must be tanh, l2f or l2f-penalty");
     if(position_l1 != 0 && reward_form == "tanh") throw std::runtime_error("--position-l1 needs --reward l2f or l2f-penalty");
+    if(near_fraction < 0 || near_fraction > 1 || near_offset <= 0) throw std::runtime_error("--near-start needs 0 <= F <= 1 and D > 0");
     if(position_bonus != 0 && reward_form == "tanh") throw std::runtime_error("--position-bonus needs --reward l2f or l2f-penalty");
     std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"algorithm\": \""
         << (FW_TD3 ? "td3" : "sac") << "\",\n  \"steps\": " << steps
@@ -700,6 +705,7 @@ int run(int argc, char** argv){
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
         << ",\n  \"actor_training_interval\": " << FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR
         << ",\n  \"action_change_scale\": " << action_change_scale << ",\n  \"reward\": \"" << reward_form << "\"" << ",\n  \"position_l1_weight\": " << position_l1 << ",\n  \"position_bonus_weight\": " << position_bonus << ",\n  \"position_bonus_scale\": [" << bonus_scale0 << ", " << bonus_scale_min << "]" << ",\n  \"position_bonus_adaptive\": " << bonus_adaptive
+        << ",\n  \"near_start_fraction\": " << near_fraction << ",\n  \"near_start_offset\": " << near_offset
         << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
         << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
@@ -764,6 +770,8 @@ int run(int argc, char** argv){
         auto& config = rlt::get(ts.off_policy_runner.envs, 0, i).config;
         config.start = start_modes.at(start_name);
         config.reference_bearing_max = std::min(bearing_max_deg, T_ENV(180)) * fixed_wing::PI / 180;
+        config.reference_near_fraction = near_fraction;
+        config.reference_near_offset_max = near_offset;
     }
     set_reward(curriculum.at_stage(stage));
 

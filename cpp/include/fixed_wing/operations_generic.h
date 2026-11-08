@@ -104,8 +104,11 @@ namespace rl_tools{
             // one draw either way: with the default, the same starts as before the option existed
             T bearing = c.reference_bearing_max >= T(fixed_wing::PI) ? uniform(T(-fixed_wing::PI), T(fixed_wing::PI))
                       : fixed_wing::wrap(course + uniform(-c.reference_bearing_max, c.reference_bearing_max));
-            T distance = uniform(T(0), c.reference_offset_max);
-            T altitude = fixed_wing::clip(body.position[2] + uniform(-c.reference_altitude_offset_max, c.reference_altitude_offset_max),
+            // the draw for a near start only when the option is on: without it, the same starts as before
+            bool near_start = c.reference_near_fraction > 0 && uniform(T(0), T(1)) < c.reference_near_fraction;
+            T distance = uniform(T(0), near_start ? c.reference_near_offset_max : c.reference_offset_max);
+            T altitude_offset_max = near_start ? std::fmin(c.reference_near_offset_max, c.reference_altitude_offset_max) : c.reference_altitude_offset_max;
+            T altitude = fixed_wing::clip(body.position[2] + uniform(-altitude_offset_max, altitude_offset_max),
                                           c.reference_altitude_range[0], c.reference_altitude_range[1]);
             T duration = fixed_wing::Environment<SPEC>::EPISODE_STEP_LIMIT * p.dt;
             T climb = fixed_wing::clip(uniform(-c.reference_climb_max, c.reference_climb_max),
