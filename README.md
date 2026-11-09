@@ -8,7 +8,7 @@ straight; the tightest circle and figure-eight (right) are beyond what it can fl
 A fixed-wing flight simulator I wrote in Python and C++ (RLtools), in which SAC policies fly the four control surfaces
 at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulation only.
 
-- Following a moving point on PX4's `advanced_plane`: 98.7% of test flights completed, 6.6 m position error (RMS),
+- Following a moving point on PX4's `advanced_plane`: 4.9 m position error (RMS) and 98% of test flights completed,
   over 10 training seeds.
 - The lab's 83 g E-flite UMX Eratix, modeled from its specs: SAC flies it after 2.4 min of training and completes 99%
   of test flights after the full 18 min run.
@@ -21,13 +21,14 @@ Related: [WingJEPA](https://github.com/clementdumeril/WingJEPA), [GeneticWing](h
 
 ## How it works
 
-- 6-DOF simulator (linear aerodynamics, actuator lag, latency, RK4) in the structure of L2F, "Learning to Fly in
-  Seconds". The C++ port matches the Python one to 7e-13 over 7,136 steps.
+- 6-DOF simulator (linear aerodynamics, or Gazebo's AdvancedLiftDrag with its post-stall blend for the
+  `advanced_plane`; actuator lag, latency, RK4) in the structure of L2F, "Learning to Fly in Seconds". The C++ port
+  matches the Python one to 7e-13 over 7,136 steps.
 - Three airframes: the Aerosonde, PX4's `advanced_plane` as Gazebo simulates it, and the E-flite UMX Eratix.
 - SAC with an asymmetric actor-critic: the actor sees only what PX4 estimates; the critics also see angle of attack,
   sideslip and the true wind.
-- Tracking task: the policy sees its position and velocity error to the point, and the reward pushes its velocity
-  toward the point (gain 0.3 /s in the best run).
+- Tracking task: the policy sees its position error to the point (also on a fine 2 m scale) and its velocity error;
+  the reward pushes its velocity toward the point (gain 0.3 /s) and adds a bonus for staying close.
 - Deployment: the actor is exported as plain C++ and run in a ROS 2 node that sends actuator commands to PX4 over
   uXRCE-DDS.
 

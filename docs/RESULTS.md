@@ -22,10 +22,18 @@ intervals and batch, L2F reward form, 4 M steps, best checkpoint, 10 seeds.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | velocity correction K = 0.1 /s | 98.8 % | 96.4 % | 9.8 ± 2.3 m | 0.46 m/s | 5.9 m | 6.8 m | 9 % |
 | velocity correction K = 0.3 /s (`guidance03`) | 98.7 % | 97.2 % | 6.6 ± 1.6 m | 0.28 m/s | 3.2 m | 4.6 m | 31 % |
+| K = 0.3 /s, fine-scale error input + adaptive closeness bonus (`fine2m_bonus_adaptive`) | 98.0 % | 98.4 % | 4.9 ± 1.0 m | 0.49 m/s | | | 62 % |
 
 Source: [`cpp/results/precision_px4plane`](../cpp/results/precision_px4plane/README.md) (`guidance03/seed*/evaluation_best*.json`)
 and [`cpp/results/l2f_reward_px4plane`](../cpp/results/l2f_reward_px4plane/README.md). That page also has the variants
-that did not beat K = 0.3 (linear distance cost, K = 0.5, closeness bonus, position-error integral).
+that did not beat K = 0.3 on their own (linear distance cost, K = 0.5, closeness bonus, position-error integral).
+± is the standard deviation over the 10 seeds (population).
+
+The last row adds tanh(error / 2 m) to the observation (65 inputs) and the closeness bonus with an adaptive scale:
+4.9 m, the same for the last actor (4.9 ± 1.3 m), 62 % of the test flights under 5 m and 12 % under 2 m. Neither change
+helps alone (6.0-6.4 m with the fine input, 6.7-10.9 m with the bonus). What is left is a steady offset per flight
+(2.4, 2.4 and 2.0 m behind, sideways and in altitude for the last actors) with 0.3-0.4 m of motion around it. Source:
+[`cpp/results/fine_px4plane`](../cpp/results/fine_px4plane/README.md) (`fine2m_bonus_adaptive/seed*/evaluation_best*.json`).
 
 Other C++ runs, each with its table and discussion: network and batch sweep
 ([`sweep`](../cpp/results/sweep/README.md)), batch 256 ([`batch_px4plane`](../cpp/results/batch_px4plane/README.md)),
