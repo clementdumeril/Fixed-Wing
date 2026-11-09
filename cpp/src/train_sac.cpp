@@ -26,6 +26,8 @@
 //   test flights) and keep the best one: best_actor.h, its tests in evaluation_best*.json and checkpoints.csv. The
 //   score is the RMS error of the completed flights (position, or course for the course task) + 10 per % of failed
 //   flights. The validation flights have their own random numbers, so training is the same as without the option
+//   --checkpoint-precise P N: the best checkpoint is the most precise one among those with a validation success of at
+//   least P (fraction) after N airplane steps; if there is none, the default score among the others
 //   --action-change-scale K: K times the weight of the command-change cost at every curriculum stage (default 1)
 //   --reward tanh|l2f|l2f-penalty: the reward form (default tanh, ours); l2f: the form and schedule of Learning to Fly
 //   in Seconds (survival 2 minus weighted squared errors, clipped at 0, weights grown every --curriculum-period);
@@ -624,7 +626,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--fine-position-scale S] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--fine-position-scale S] [--checkpoint-precise P N] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -643,6 +645,8 @@ int run(int argc, char** argv){
     T_ENV bearing_max_deg = 180;
     T_ENV near_fraction = 0, near_offset = 5;  // --near-start F D
     T_ENV fine_scale = 2;  // --fine-position-scale S
+    double precise_min_success = 0;  // --checkpoint-precise P N
+    TI precise_after = 0;
     int fixed_stage = -1;  // >= 0: no curriculum, the reward weights of that stage from the start
     TI curriculum_period = Curriculum{}.period;
     TI checkpoint_interval = 0;  // 0: no validation flights, only the final actor
@@ -662,6 +666,7 @@ int run(int argc, char** argv){
         else if(option == "--velocity-guidance" && i + 1 < argc) guidance = std::stod(argv[++i]);
         else if(option == "--reference-bearing-max" && i + 1 < argc) bearing_max_deg = std::stod(argv[++i]);
         else if(option == "--fine-position-scale" && i + 1 < argc) fine_scale = std::stod(argv[++i]);
+        else if(option == "--checkpoint-precise" && i + 2 < argc){ precise_min_success = std::stod(argv[++i]); precise_after = std::stoul(argv[++i]); }
         else if(option == "--near-start" && i + 2 < argc){ near_fraction = std::stod(argv[++i]); near_offset = std::stod(argv[++i]); }
         else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
@@ -693,6 +698,8 @@ int run(int argc, char** argv){
     if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
     if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty") throw std::runtime_error("--reward must be tanh, l2f or l2f-penalty");
     if(position_l1 != 0 && reward_form == "tanh") throw std::runtime_error("--position-l1 needs --reward l2f or l2f-penalty");
+    if(precise_min_success < 0 || precise_min_success > 1) throw std::runtime_error("--checkpoint-precise needs 0 <= P <= 1");
+    if(precise_min_success > 0 && checkpoint_interval == 0) throw std::runtime_error("--checkpoint-precise needs --checkpoint-interval");
     if(fine_scale <= 0) throw std::runtime_error("--fine-position-scale must be positive");
     if(fine_scale != 2 && !FW_FINE_POSITION) throw std::runtime_error("--fine-position-scale needs a train_sac_*_fine target");
     if(near_fraction < 0 || near_fraction > 1 || near_offset <= 0) throw std::runtime_error("--near-start needs 0 <= F <= 1 and D > 0");
@@ -714,7 +721,8 @@ int run(int argc, char** argv){
         << ",\n  \"near_start_fraction\": " << near_fraction << ",\n  \"near_start_offset\": " << near_offset
         << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
-        << ",\n  \"checkpoint_interval\": " << checkpoint_interval << ",\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
+        << ",\n  \"checkpoint_interval\": " << checkpoint_interval
+        << ",\n  \"checkpoint_precise\": [" << precise_min_success << ", " << precise_after << "],\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -852,6 +860,12 @@ int run(int argc, char** argv){
             EvaluationSummary s;
             evaluate(device, rlt::get_actor(ts), validation, validation_rng, {}, &s);
             double score = s.error + 1000 * (1 - s.success_rate);  // 10 per % of failed flights
+            if(precise_min_success > 0){
+                // --checkpoint-precise: the error alone for the eligible checkpoints; the others after all of them,
+                // in the order of the default score
+                bool eligible = s.success_rate >= precise_min_success - 1e-9 && step >= precise_after;
+                score = eligible ? s.error : 1e6 + score;
+            }
             checkpoints << step << "," << s.success_rate << "," << s.error << "," << score << std::endl;
             if(score < best_score){
                 best_score = score;
