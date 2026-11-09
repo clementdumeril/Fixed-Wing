@@ -1,87 +1,64 @@
-# Fixed-Wing: low-level SAC flight control of a fixed-wing UAV
+# Fixed-Wing: reinforcement learning for low-level fixed-wing flight control
 
-[Python results](python/results/sac_gated_curriculum/README.md) · [C++ port and PX4 SITL](cpp/README.md) ·
-[Reward and checks](docs/method.md) · [Components and figures](docs/reproduce.md) ·
+![A tracking policy on PX4's advanced_plane (blue) following a moving point (black) on circles and figure-eights](cpp/results/reference_suite/trajectories.png)
+
+*A SAC policy on PX4's `advanced_plane` (blue) following a moving point (black). It was trained on points that fly
+straight; the tightest circle and figure-eight (right) are beyond what it can fly. Simulation.*
+
+A fixed-wing flight simulator I wrote in Python and C++ (RLtools), in which SAC policies fly the four control surfaces
+at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulation only.
+
+- Following a moving point on PX4's `advanced_plane`: 98.7% of test flights completed, 6.6 m position error (RMS),
+  over 10 training seeds.
+- The lab's 83 g E-flite UMX Eratix, modeled from its specs: SAC flies it after 2.4 min of training and completes 99%
+  of test flights after the full 18 min run.
+- The trained policy flies the airplane in PX4 SITL and Gazebo through a ROS 2 offboard node at 50 Hz. An
+  identification flight showed no bias between this simulator's predictions and Gazebo.
+
+[Detailed results](docs/RESULTS.md) · [Reward and method](docs/method.md) · [C++ port and PX4 SITL](cpp/README.md) ·
+[Eratix model](docs/eratix_model.md) · [Components](docs/reproduce.md) ·
 Related: [WingJEPA](https://github.com/clementdumeril/WingJEPA), [GeneticWing](https://github.com/clementdumeril/GeneticWing)
 
-![Overview: task, simulator and asymmetric SAC actor-critic, PID baseline, and results on 100 test flights](docs/figures/overview.png)
+## How it works
 
-A NumPy and C++ (RLtools) fixed-wing simulator in the structure of L2F, in which SAC policies fly the four control
-surfaces at 50 Hz. In wind and turbulence, SAC holds airspeed better than a cascaded PID on all 3 seeds (0.59 against
-0.78 m/s RMS) but completes fewer of the 100 test flights on average (92 against 97). MEng capstone at UC Berkeley,
-ARPL (Prof. Giuseppe Loianno), in simulation only.
+- 6-DOF simulator (linear aerodynamics, actuator lag, latency, RK4) in the structure of L2F, "Learning to Fly in
+  Seconds". The C++ port matches the Python one to 7e-13 over 7,136 steps.
+- Three airframes: the Aerosonde, PX4's `advanced_plane` as Gazebo simulates it, and the E-flite UMX Eratix.
+- SAC with an asymmetric actor-critic: the actor sees only what PX4 estimates; the critics also see angle of attack,
+  sideslip and the true wind.
+- Tracking task: the policy sees its position and velocity error to the point, and the reward pushes its velocity
+  toward the point (gain 0.3 /s in the best run).
+- Deployment: the actor is exported as plain C++ and run in a ROS 2 node that sends actuator commands to PX4 over
+  uXRCE-DDS.
 
-## Method
+## Run it
 
-The question behind the project: for sim-to-real transfer of a low-level fixed-wing policy, how much does a faithful
-model help compared with wide domain randomization? This repository is the simulator and training side. The
-structure (parameters, state, RK4, observe / reward / terminate) follows L2F from RLtools; the fixed-wing physics,
-wind models, task, PID baseline, C++ port and PX4 SITL deployment are mine. SAC uses an asymmetric actor-critic: the
-actor sees only what PX4 estimates, the critics also see angle of attack, sideslip and the true wind. Reward,
-gated curriculum and the three reward fixes: [docs/method.md](docs/method.md).
-
-## Results
-
-From a perturbed start, hold an airspeed (20 to 30 m/s), an altitude (±20 m) and a course (±90°) for 30 s. Every
-pilot flies the same 100 test scenarios. Windy: constant wind up to 5 m/s, light Dryden turbulence, sensor noise. SAC
-rows: mean ± std over 3 seeds, 1 M steps each.
-
-| Pilot | Air | Complete / 100 | Return (max 1500) | Airspeed RMS (m/s) | Altitude RMS (m) | Course RMS (deg) |
-| --- | --- | --- | --- | --- | --- | --- |
-| PID | calm | 100 | 1322 | 0.37 | 0.68 | 0.0 |
-| SAC, Python | calm | 90 ± 3 | 1163 ± 21 | 0.55 ± 0.22 | 2.33 ± 0.15 | 4.4 ± 2.1 |
-| SAC, C++ critic 256 | calm | 97 ± 1 | 1335 ± 19 | 0.23 ± 0.06 | 0.99 ± 0.89 | 1.7 ± 1.0 |
-| SAC, C++ critic 64 | calm | 69 ± 49 | 642 ± 184 | 2.30 ± 1.02 | 15.54 ± 12.70 | 37.3 ± 19.8 |
-| PID | windy | 97 | 1238 | 0.78 | 1.34 | 0.1 |
-| SAC, Python | windy | 92 ± 7 | 1197 ± 70 | 0.59 ± 0.05 | 1.73 ± 0.45 | 3.6 ± 0.9 |
-
-Printed by `python examples/results_table.py` from the committed `evaluation.json` files of
-[`python/results/sac_gated_curriculum`](python/results/sac_gated_curriculum/README.md) and
-[`cpp/results/sweep`](cpp/results/sweep/README.md). On average the PID is still the better pilot; most SAC failures
-are stalls in the first 5 s, from banking 50 to 80° where the PID limits its bank to 30°.
-
-![SAC (orange) and PID (blue) turning to a new course and altitude in the same wind and turbulence, seen from above](python/results/sac_gated_curriculum/rl_vs_pid_windy_scenario1.gif)
-
-*Best windy SAC seed (seed 2) and the PID on test scenario 1, same wind and turbulence.*
-
-## Install and quick start
-
-Tested with Python 3.11 on Windows 10 and Linux. Dependencies are not pinned.
+Python simulator and tests (Python 3.11, Windows 10 or Linux):
 
 ```bash
 cd python
-python -m venv ~/.venvs/fixed-wing && source ~/.venvs/fixed-wing/bin/activate
 pip install -e ".[dev,rl]"
 pytest                                   # 51 passed, about 1 min
-python examples/pid_baseline.py          # PID on the 100 test scenarios, about 6 min
-python examples/train_sac.py --steps 1000000 --n-envs 8 --out runs/sac   # about 4 h on 8 cores
+python examples/train_sac.py --steps 1000000 --n-envs 8 --out runs/sac
 ```
 
-The C++ build (CMake, fetches a fixed RLtools commit, Intel MKL or OpenBLAS), Slurm job files and the ROS 2 node
-(Ubuntu 24.04, ROS 2 Jazzy, PX4 SITL) are in [`cpp/README.md`](cpp/README.md). More commands and figure scripts:
-[docs/reproduce.md](docs/reproduce.md).
+C++ training and PX4 SITL (Ubuntu 24.04, ROS 2 Jazzy, PX4 built with `make px4_sitl`), from `cpp/`:
 
-## Code structure
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release
+python tools/export_policy.py <run>/actor.h deploy/ros2/fw_policy/policy/policy_weights.h
+bash deploy/ros2/setup_wsl.sh ~/PX4-Autopilot <RLtools include directory>
+bash deploy/ros2/fly_sitl.sh
+```
 
-| Path | Content |
-| --- | --- |
-| `python/fixed_wing/airplane/` | simulator, wind, Gymnasium task and reward, PID baseline, asymmetric SAC |
-| `python/examples/` | training, evaluation, diagnostics, plots, GIFs, 3D viewer |
-| `python/tests/` | 51 tests (trim, control signs, wind statistics, reward recomputation) |
-| `cpp/include/fixed_wing/`, `cpp/src/` | C++ port in the RLtools MDP form, SAC training, check against Python |
-| `cpp/deploy/ros2/fw_policy/` | ROS 2 node that flies an exported actor on PX4 SITL over uXRCE-DDS |
-| `python/slurm/`, `cpp/slurm/` | Slurm job files |
+All targets and options: [cpp/README.md](cpp/README.md). Figure scripts: [docs/reproduce.md](docs/reproduce.md).
 
 ## Limitations
 
-- Placeholder airframes (Aerosonde, PX4 `advanced_plane`), linear aerodynamics without stall: the angle-of-attack
-  limit ends the episode instead. No parameter randomization yet, so the research question is not answered yet.
-- Three seeds per condition; success varies by up to 14 flights between seeds, so small differences are not
-  significant.
-- The C++ port is trained in calm air only: wind, turbulence and sensor noise are not ported.
-- The C++ tracking task and the PX4 SITL flights have no committed evaluation files or logs, so no number from them
-  is reported here.
-- No real flight.
+- Simulation only, no real flight. The Eratix model comes from specs and textbook aerodynamics, not flight data yet.
+- The tracking policies are trained and tested in calm air; wind and turbulence exist only in the Python task.
+- No domain randomization in the reported runs, so the sim-to-real question behind the project is still open.
+- On the first task (hold airspeed, altitude, course in wind) a tuned PID still completes more flights than SAC.
 
 ## Credits
 
