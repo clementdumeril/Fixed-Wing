@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" font-family="Arial, Helvetica, sans-serif">
+  <!-- Overview for the portfolio card. Render: python outils/render_svg.py docs/figures/card/overview_card.svg (CAREER repo). -->
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="1198" height="618" rx="16" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.5"/>
+
+  <!-- zone outlines -->
+  <rect x="24" y="44" width="212" height="310" rx="10" fill="none" stroke="#B8C2CC" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <rect x="252" y="44" width="652" height="310" rx="10" fill="none" stroke="#B8C2CC" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <rect x="920" y="44" width="256" height="310" rx="10" fill="none" stroke="#B8C2CC" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <g font-size="13" fill="#5A6875" letter-spacing="1.2">
+    <text x="36" y="34">TASK</text>
+    <text x="264" y="34">TRAINING IN SIMULATION</text>
+    <text x="932" y="34">DEPLOYMENT</text>
+  </g>
+
+  <!-- task: a moving point and the airplane chasing it, drawn -->
+  <path d="M 40,166 C 66,140 96,122 132,112" fill="none" stroke="#C97A2B" stroke-width="2" stroke-dasharray="1 5" stroke-linecap="round"/>
+  <line x1="168" y1="104" x2="214" y2="98" stroke="#15202A" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <circle cx="168" cy="104" r="7" fill="#15202A"/>
+  <path d="M 154,106 L 136,102 L 140,117 Z" fill="#C97A2B"/>
+  <text x="40" y="186" font-size="17" fill="#15202A">moving point</text>
+  <text x="40" y="206" font-size="15" fill="#5A6875">12–18 m/s, starts</text>
+  <text x="40" y="225" font-size="15" fill="#5A6875">0–50 m away</text>
+  <text x="40" y="268" font-size="17" fill="#15202A">30 s flights</text>
+  <text x="40" y="288" font-size="15" fill="#5A6875">calm air, perturbed</text>
+  <text x="40" y="307" font-size="15" fill="#5A6875">starts</text>
+
+  <line x1="222" y1="186" x2="264" y2="186" stroke="#444" stroke-width="2" marker-end="url(#ah)"/>
+
+  <!-- simulator -->
+  <rect x="266" y="64" width="250" height="236" rx="10" fill="#DCF1EE" stroke="#0D7A6F" stroke-width="1.5"/>
+  <text x="391" y="102" font-size="26" fill="#15202A" text-anchor="middle">Simulator</text>
+  <text x="391" y="126" font-size="16" fill="#0D7A6F" text-anchor="middle">C++, RLtools, 100 Hz</text>
+  <g font-size="16" fill="#15202A" text-anchor="middle">
+    <text x="391" y="164">6-DoF rigid body, RK4</text>
+    <text x="391" y="188">PX4 advanced_plane,</text>
+    <text x="391" y="208">lab's 83 g Eratix</text>
+    <text x="391" y="232">servo lag, latency</text>
+    <text x="391" y="276" fill="#5A6875" font-size="15">= Python sim to 7e-13</text>
+  </g>
+
+  <!-- actor and critics -->
+  <rect x="604" y="64" width="284" height="118" rx="10" fill="#E2EBFA" stroke="#1F5FBF" stroke-width="1.5"/>
+  <text x="746" y="98" font-size="24" fill="#15202A" text-anchor="middle">SAC actor</text>
+  <text x="746" y="122" font-size="16" fill="#1F5FBF" text-anchor="middle">MLP 64×64, 50 Hz</text>
+  <text x="746" y="148" font-size="15" fill="#5A6875" text-anchor="middle">error to the point (also on a 2 m</text>
+  <text x="746" y="167" font-size="15" fill="#5A6875" text-anchor="middle">scale), velocity, attitude, rates</text>
+
+  <rect x="604" y="214" width="284" height="86" rx="10" fill="#FFFFFF" stroke="#8A9AA8" stroke-width="1.5"/>
+  <text x="746" y="244" font-size="22" fill="#15202A" text-anchor="middle">2 critics</text>
+  <text x="746" y="268" font-size="15" fill="#5A6875" text-anchor="middle">MLP 128×128, also see</text>
+  <text x="746" y="287" font-size="15" fill="#5A6875" text-anchor="middle">α, β, airspeed, actuators</text>
+
+  <!-- training loop -->
+  <line x1="516" y1="100" x2="602" y2="100" stroke="#444" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="560" y="90" font-size="15" fill="#5A6875" text-anchor="middle"><tspan font-family="Georgia, serif" font-style="italic">o</tspan><tspan baseline-shift="sub" font-size="11">t</tspan> ∈ ℝ<tspan baseline-shift="super" font-size="11">65</tspan></text>
+  <line x1="602" y1="148" x2="518" y2="148" stroke="#444" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="560" y="168" font-size="15" fill="#5A6875" text-anchor="middle"><tspan font-family="Georgia, serif" font-style="italic">a</tspan><tspan baseline-shift="sub" font-size="11">t</tspan> ∈ ℝ<tspan baseline-shift="super" font-size="11">4</tspan></text>
+  <line x1="516" y1="257" x2="602" y2="257" stroke="#444" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="560" y="247" font-size="15" fill="#5A6875" text-anchor="middle"><tspan font-family="Georgia, serif" font-style="italic">r</tspan><tspan baseline-shift="sub" font-size="11">t</tspan></text>
+  <line x1="746" y1="212" x2="746" y2="184" stroke="#444" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah)"/>
+  <text x="756" y="204" font-size="15" fill="#5A6875">∇<tspan font-family="Georgia, serif" font-style="italic">Q</tspan></text>
+  <text x="578" y="334" font-size="15" fill="#5A6875" text-anchor="middle">reward: L2F form + a bonus for staying close; 4 M steps, 18 min on one CPU core</text>
+
+  <!-- deployment -->
+  <line x1="888" y1="123" x2="930" y2="123" stroke="#444" stroke-width="2" marker-end="url(#ah)"/>
+  <rect x="932" y="64" width="232" height="236" rx="10" fill="#F1F4F6" stroke="#8A9AA8" stroke-width="1.5"/>
+  <image href="ov_3d.png" x="944" y="76" width="208" height="128" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="944" y="76" width="208" height="128" rx="6" fill="none" stroke="#8A9AA8" stroke-width="1"/>
+  <text x="1048" y="236" font-size="22" fill="#15202A" text-anchor="middle">PX4 SITL</text>
+  <text x="1048" y="260" font-size="15" fill="#5A6875" text-anchor="middle">Gazebo, ROS 2 node,</text>
+  <text x="1048" y="279" font-size="15" fill="#5A6875" text-anchor="middle">actor exported as C++</text>
+
+  <!-- results band -->
+  <text x="36" y="396" font-size="13" fill="#5A6875" letter-spacing="1.2">RESULTS</text>
+  <line x1="110" y1="391" x2="1164" y2="391" stroke="#E1E6EA" stroke-width="1"/>
+
+  <image href="ov_precision.png" x="36" y="412" width="187" height="140" preserveAspectRatio="xMidYMid meet"/>
+  <rect x="36" y="412" width="187" height="140" rx="6" fill="none" stroke="#8A9AA8" stroke-width="1"/>
+  <text x="36" y="576" font-size="15" fill="#15202A">one change at a time</text>
+  <text x="36" y="596" font-size="15" fill="#5A6875">10 seeds, mean ± std</text>
+
+  <image href="ov_circle25.png" x="243" y="412" width="140" height="140" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="243" y="412" width="140" height="140" rx="6" fill="none" stroke="#8A9AA8" stroke-width="1"/>
+  <text x="243" y="576" font-size="15" fill="#15202A">circle, R 25 m</text>
+  <text x="243" y="596" font-size="15" fill="#5A6875">97% completed</text>
+
+  <image href="ov_eight23.png" x="403" y="412" width="140" height="140" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="403" y="412" width="140" height="140" rx="6" fill="none" stroke="#8A9AA8" stroke-width="1"/>
+  <text x="403" y="576" font-size="15" fill="#15202A">figure-eight, 23 s</text>
+  <text x="403" y="596" font-size="15" fill="#5A6875">95% completed</text>
+
+  <image href="ov_circle6.png" x="563" y="412" width="140" height="140" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="563" y="412" width="140" height="140" rx="6" fill="none" stroke="#8A9AA8" stroke-width="1"/>
+  <text x="563" y="576" font-size="15" fill="#15202A">circle, R 6.5 m</text>
+  <text x="563" y="596" font-size="15" fill="#5A6875">38%: past its limit</text>
+
+  <text x="723" y="470" font-size="14" fill="#5A6875">policies trained on</text>
+  <text x="723" y="489" font-size="14" fill="#5A6875">straight lines only</text>
+  <text x="723" y="508" font-size="14" fill="#5A6875">(the 9.8 m stage);</text>
+  <text x="723" y="527" font-size="14" fill="#5A6875">black: the point</text>
+
+  <!-- headline number -->
+  <rect x="880" y="412" width="284" height="140" rx="10" fill="none" stroke="#B8461F" stroke-width="1.5"/>
+  <text x="898" y="470" font-size="42" fill="#B8461F" font-weight="bold">4.9 m</text>
+  <text x="1018" y="452" font-size="16" fill="#15202A">tracking error,</text>
+  <text x="1018" y="472" font-size="16" fill="#15202A">98% of test flights</text>
+  <line x1="904" y1="496" x2="1140" y2="496" stroke="#E1E6EA" stroke-width="1"/>
+  <text x="904" y="524" font-size="16" fill="#5A6875">was 12.9 m; lab Eratix model:</text>
+  <text x="904" y="544" font-size="16" fill="#5A6875">99% of test flights, 7.9 m</text>
+</svg>
