@@ -22,3 +22,25 @@ Each folder holds per seed the configuration, the validation checkpoints, the tr
   2.0 m; the motion around it stays at 0.3-0.4 m. It is still the main part of the error.
 - `fine2m` seed 5 stopped at 1M steps (`progress.csv`), about twice slower than the others and with a training return
   below zero: no test results, left out of the table.
+
+## Second run (job 41037545, `slurm/tracking_px4plane_fine2.slurm`, folder `second_run/`)
+
+Every variant has the fine observation and the adaptive closeness bonus, and keeps as best checkpoint the most precise
+one with at least 97 % validation success after 1M steps (`--checkpoint-precise 0.97 1000000`).
+
+| 10 seeds | Best: test A, B | Best: position | Best: flights under 5 m, 2 m | Best: median flight | Last: test A | Last: position |
+| --- | --- | --- | --- | --- | --- | --- |
+| `fine2m_bonus1`: S = 2 m, bonus weight 1 (the first run's best variant again) | 98.8, 96.8 % | 3.7 ± 1.0 m | 79, 15 % | 3.2 m | 97.7 % | 4.1 ± 1.3 m |
+| `fine1m_bonus1`: S = 1 m | 99.4, 97.3 % | 3.4 ± 0.8 m | 85, 22 % | 3.2 m | 98.9 % | 4.3 ± 0.6 m |
+| `fine2m_bonus2`: bonus weight 2 | 97.9, 95.8 % | **2.4 ± 0.4 m** | **96, 54 %** | **1.9 m** | 95.0 % | 3.5 ± 1.5 m |
+| `fine2m_bonus1_quarter`: bonus scale a quarter of the training distance | 98.8, 97.0 % | 3.5 ± 1.2 m | 80, 26 % | 3.6 m | 95.4 % | 5.5 ± 1.6 m |
+
+- **A bonus weight of 2 halves the error**: 2.4 ± 0.4 m on test A for the kept actors, every seed between 1.75 and
+  3.0 m, 54 % of the flights under 2 m. The cost is a little safety: 97.9 % on test A, 95.8 % on test B (failures:
+  airspeed too low and angle of attack beyond the limits).
+- The precise checkpoint choice holds on the test flights: validation 2.5 m, test A 2.4 m for `fine2m_bonus2`.
+- The steady offset per flight drops to 1.2, 1.0, 1.0 m (behind, sideways, altitude) for `fine2m_bonus2`, with
+  0.2 m of motion around it.
+- Runs with the same seed and options are not identical from one job to the other (`fine2m_bonus1` against the first
+  run's `fine2m_bonus_adaptive`: the training progress differs from 20k steps on), so differences of about 0.5 m
+  between variants are within what a rerun changes.
