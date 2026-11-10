@@ -14,6 +14,8 @@
 //   out_dir gets reference_suite.json (one entry per start, motion and level), flights_summary.csv (one row per flight)
 //   and flights/<start>_<motion>_<level>.csv (the first K flights of each level, step by step, for plots)
 //   --motions: a subset of straight, circle, helix, figure_eight, speed, speed_range (default all)
+//   --fine-position-scale: the S of the run (config.json, fine_position_scale), with evaluate_reference_fine for the
+//   actors of the _fine targets (default 2)
 #include <rl_tools/operations/cpu_mux.h>
 
 #include <fixed_wing/operations_generic.h>
@@ -352,7 +354,8 @@ std::string level_json(const std::string& start, const Level& level, const Descr
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: evaluate_reference <actor.h> <out_dir> [--flights N] [--record K] [--threads N] [--motions m1,m2,...]" << std::endl;
+        std::cerr << "usage: evaluate_reference <actor.h> <out_dir> [--flights N] [--record K] [--threads N] [--motions m1,m2,...]"
+                     " [--fine-position-scale S]" << std::endl;
         return 1;
     }
     Actor actor = load_actor(argv[1]);
@@ -360,14 +363,17 @@ int run(int argc, char** argv){
     TI n_flights = 50, n_recorded = 2;
     unsigned n_threads = std::max(1u, std::thread::hardware_concurrency());
     std::string motions = "straight,circle,helix,figure_eight,speed,speed_range";
+    T fine_scale = 2;
     for(int i = 3; i < argc; i++){
         std::string option = argv[i];
         if(option == "--flights" && i + 1 < argc) n_flights = std::stoul(argv[++i]);
         else if(option == "--record" && i + 1 < argc) n_recorded = std::stoul(argv[++i]);
         else if(option == "--threads" && i + 1 < argc) n_threads = std::stoul(argv[++i]);
         else if(option == "--motions" && i + 1 < argc) motions = "," + std::string(argv[++i]) + ",";
+        else if(option == "--fine-position-scale" && i + 1 < argc) fine_scale = std::stod(argv[++i]);
         else throw std::runtime_error("unknown option " + option);
     }
+    if(!FW_FINE_POSITION && fine_scale != 2) throw std::runtime_error("--fine-position-scale needs evaluate_reference_fine");
     if(motions.front() != ',') motions = "," + motions + ",";
     std::filesystem::create_directories(out_dir / "flights");
 
@@ -375,6 +381,7 @@ int run(int argc, char** argv){
     rlt::init(device);
     ENVIRONMENT env;
     rlt::init(device, env);
+    env.config.fine_position_scale = fine_scale;
     ENVIRONMENT::Parameters p;
     fw::task_parameters(env.config, p);
     const std::pair<std::string, fw::StartMode> starts[] = {{"level", fw::NEUTRAL}, {"random", fw::RANDOM}};
