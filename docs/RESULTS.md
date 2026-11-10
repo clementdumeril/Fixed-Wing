@@ -45,6 +45,15 @@ and 0.7 m with 0.1 m of motion around it; the cost is rougher commands (0.041 pe
 and the last actors stay at 3.5 m. Source: [`cpp/results/fine_px4plane`](../cpp/results/fine_px4plane/README.md)
 (`second_run/fine2m_bonus2`, `third_run/fine2m_bonus4`).
 
+### Points that accelerate
+
+Trained only on points that fly straight, `fine2m_bonus4` keeps most of its precision when the point turns or
+changes speed: circles at 2.0 m (R 300 m), 4.4 m (R 60 m, 21° of bank) and 7.3 m (R 25 m, 43°), against 9.8, 12.2
+and 13.2 m for the first L2F reward; the added error is a lag behind the point (5.6 m at 43°). It breaks earlier on
+the hardest turns: 80 % of the circles completed at 60° of bank against 92 %, 48 % at 69° against 72 %, ending at
+the angle-of-attack limit. Source: [`cpp/results/reference_suite_fine`](../cpp/results/reference_suite_fine/README.md)
+(`compare.png`, `fine2m_bonus4/summary.csv`; the first L2F reward: [`reference_suite`](../cpp/results/reference_suite/README.md)).
+
 Other C++ runs, each with its table and discussion: network and batch sweep
 ([`sweep`](../cpp/results/sweep/README.md)), batch 256 ([`batch_px4plane`](../cpp/results/batch_px4plane/README.md)),
 3 M steps with the best checkpoint ([`long_px4plane`](../cpp/results/long_px4plane/README.md)), L2F update intervals
