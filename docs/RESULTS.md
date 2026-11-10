@@ -15,14 +15,17 @@ critics also see angle of attack, sideslip and the true wind.
 ## Following a moving point on PX4's advanced_plane (C++)
 
 A reference point starts up to 50 m from the airplane and flies straight; the airplane has to reach it and follow it.
-Test A: 100 flights per seed from a neutral start; test B: the point within 45° ahead. SAC, critic 128, L2F update
+Test A: 100 flights per seed from a neutral start; random start: 100 flights from random starts
+(`evaluation_best_random.json`). SAC, critic 128, L2F update
 intervals and batch, L2F reward form, 4 M steps, best checkpoint, 10 seeds.
 
-| 10 seeds, best checkpoint | Test A | Test B | Position RMS | Velocity RMS | Behind the point | Lateral RMS | Flights under 5 m |
+| 10 seeds, best checkpoint | Test A | Random start | Position RMS | Velocity RMS | Behind the point | Lateral RMS | Flights under 5 m |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | velocity correction K = 0.1 /s | 98.8 % | 96.4 % | 9.8 ± 2.3 m | 0.46 m/s | 5.9 m | 6.8 m | 9 % |
 | velocity correction K = 0.3 /s (`guidance03`) | 98.7 % | 97.2 % | 6.6 ± 1.6 m | 0.28 m/s | 3.2 m | 4.6 m | 31 % |
 | K = 0.3 /s, fine-scale error input + adaptive closeness bonus (`fine2m_bonus_adaptive`) | 98.0 % | 98.4 % | 4.9 ± 1.0 m | 0.49 m/s | | | 62 % |
+| same, most precise checkpoint with >= 97 % validation success, bonus weight 2 (`fine2m_bonus2`) | 97.9 % | 95.8 % | 2.4 ± 0.4 m | 0.39 m/s | 0.8 m | 1.1 m | 96 % |
+| same, bonus weight 4 (`fine2m_bonus4`) | 97.6 % | 96.8 % | **1.8 ± 0.5 m** | 0.31 m/s | 0.9 m | 0.8 m | 97 % |
 
 Source: [`cpp/results/precision_px4plane`](../cpp/results/precision_px4plane/README.md) (`guidance03/seed*/evaluation_best*.json`)
 and [`cpp/results/l2f_reward_px4plane`](../cpp/results/l2f_reward_px4plane/README.md). That page also has the variants
@@ -34,6 +37,13 @@ The last row adds tanh(error / 2 m) to the observation (65 inputs) and the close
 helps alone (6.0-6.4 m with the fine input, 6.7-10.9 m with the bonus). What is left is a steady offset per flight
 (2.4, 2.4 and 2.0 m behind, sideways and in altitude for the last actors) with 0.3-0.4 m of motion around it. Source:
 [`cpp/results/fine_px4plane`](../cpp/results/fine_px4plane/README.md) (`fine2m_bonus_adaptive/seed*/evaluation_best*.json`).
+
+The last two rows keep as best checkpoint the most precise one with at least 97 % validation success after 1 M steps
+(`--checkpoint-precise 0.97 1000000`; 3.7 m with weight 1) and raise the closeness bonus weight: 2.4 m with weight 2,
+1.8 m with weight 4 (seeds between 1.3 and 2.6 m, 78 % of the flights under 2 m). The steady offset drops to 1.0, 0.8
+and 0.7 m with 0.1 m of motion around it; the cost is rougher commands (0.041 per step instead of 0.021 with weight 2),
+and the last actors stay at 3.5 m. Source: [`cpp/results/fine_px4plane`](../cpp/results/fine_px4plane/README.md)
+(`second_run/fine2m_bonus2`, `third_run/fine2m_bonus4`).
 
 Other C++ runs, each with its table and discussion: network and batch sweep
 ([`sweep`](../cpp/results/sweep/README.md)), batch 256 ([`batch_px4plane`](../cpp/results/batch_px4plane/README.md)),

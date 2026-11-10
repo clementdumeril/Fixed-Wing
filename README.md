@@ -8,8 +8,8 @@ straight; the tightest circle and figure-eight (right) are beyond what it can fl
 A fixed-wing flight simulator I wrote in Python and C++ (RLtools), in which SAC policies fly the four control surfaces
 at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulation only.
 
-- Following a moving point on PX4's `advanced_plane`: 4.9 m position error (RMS) and 98% of test flights completed,
-  over 10 training seeds.
+- Following a moving point flying straight on PX4's `advanced_plane`: 1.8 m position error (RMS) and 98% of test
+  flights completed, over 10 training seeds.
 - The lab's 83 g E-flite UMX Eratix, modeled from its specs: SAC flies it after 2.4 min of training and completes 99%
   of test flights after the full 18 min run.
 - The trained policy flies the airplane in PX4 SITL and Gazebo through a ROS 2 offboard node at 50 Hz. An
