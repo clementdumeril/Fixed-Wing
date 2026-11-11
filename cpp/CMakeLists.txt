@@ -166,6 +166,20 @@ target_link_libraries(train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine PRI
 target_compile_definitions(train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine PRIVATE FW_CRITIC_HIDDEN=128 FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=10 FW_ACTOR_INTERVAL_FACTOR=2 FW_FINE_POSITION=1)
 list(APPEND TRAIN_TARGETS train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine)
 
+# the same with smaller critics or fewer updates, for the training time (slurm/tracking_px4plane_speed.slurm): critic 64
+# as in L2F, critic 32 as RLtools' L2F zoo (rl/zoo/l2f/td3.h), updates every 16 steps as in that zoo, and both
+foreach(variant "64;10" "32;10" "64;16" "32;16")
+    list(GET variant 0 critic)
+    list(GET variant 1 interval)
+    math(EXPR actor_interval "2 * ${interval}")
+    set(target train_sac_c${critic}_b256_tracking_g995_px4plane_i${interval}a${actor_interval}_fine)
+    add_executable(${target} src/train_sac.cpp)
+    target_include_directories(${target} PRIVATE include)
+    target_link_libraries(${target} PRIVATE RLtools::RLtools)
+    target_compile_definitions(${target} PRIVATE FW_CRITIC_HIDDEN=${critic} FW_BATCH=256 FW_TRACKING=1 FW_GAMMA=0.995 FW_AIRPLANE=1 FW_TRAINING_INTERVAL=${interval} FW_ACTOR_INTERVAL_FACTOR=2 FW_FINE_POSITION=1)
+    list(APPEND TRAIN_TARGETS ${target})
+endforeach()
+
 # TD3 as above with half the exploration noise (0.05 instead of 0.1): its policies switched the surfaces between their
 # limits at about the control rate (results/l2f_td3_px4plane)
 add_executable(train_td3_c64_b256_tracking_g995_px4plane_i10a20_n005 src/train_sac.cpp)
