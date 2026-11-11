@@ -1,6 +1,6 @@
 """3D animation of recorded tracking flights (the flights/*.csv of evaluate_reference, or flights*.csv of train_sac).
 
-python tools/render_flight_video.py <flights.csv> <out.gif|out.mp4> [--flight F] [--title TEXT] [--speed X] [--fps N]
+python tools/render_flight_video.py <flights.csv> <out.gif|out.mp4> [--flight F] [--title TEXT] [--speed X] [--fps N] [--dpi N]
 
 Left: the airplane (drawn 6 times larger than its span so that its attitude reads) and its trail, the point and its
 whole path, at true scale on all three axes. Right: the distance to the point and the airspeed against time. The
@@ -56,7 +56,7 @@ def load(path, flight):
 
 def main():
     args = sys.argv[1:]
-    opts = {"--flight": "0", "--title": "", "--speed": "2", "--fps": "20"}
+    opts = {"--flight": "0", "--title": "", "--speed": "2", "--fps": "20", "--dpi": "100"}
     for k in list(opts):
         if k in args:
             i = args.index(k)
@@ -82,7 +82,7 @@ def main():
 
     plt.rcParams.update({"font.size": 10, "text.color": INK, "axes.labelcolor": MUTED, "xtick.color": MUTED,
                          "ytick.color": MUTED, "axes.edgecolor": MUTED})
-    fig = plt.figure(figsize=(9.6, 5.4), dpi=100)
+    fig = plt.figure(figsize=(9.6, 5.4), dpi=int(opts["--dpi"]))
     ax = fig.add_axes([-0.03, 0.0, 0.66, 0.88], projection="3d")
     ax.set_xlim(centre[0] - half, centre[0] + half)
     ax.set_ylim(centre[1] - half, centre[1] + half)

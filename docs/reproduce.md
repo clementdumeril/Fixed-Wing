@@ -51,6 +51,9 @@ From `python/`, on a committed run directory:
 | `rl_vs_pid_windy_scenario1.gif` | `python examples/make_videos.py results/sac_gated_curriculum/windy_seed2 --seed 1 --comparison-only` |
 | `diagnosis.json` | `python examples/diagnose_flights.py results/sac_gated_curriculum/windy_seed2 --out diagnosis.json` |
 | `cpp/results/sweep/sweep.png` | `python tools/plot_sweep.py results/sweep` (from `cpp/`) |
+| `docs/figures/error_reduction.png` | `python tools/plot_error_reduction.py ../docs/figures/error_reduction.png` (from `cpp/`) |
+| `cpp/results/reference_suite_fine/compare.png` | `python tools/plot_reference_compare.py results/reference_suite_fine/compare.png "<label>=<summary.csv>" ...` (from `cpp/`, command in its README) |
+| `docs/media/*.gif` | `build/evaluate_reference_fine <run>/best_actor.h <out> --record 3`, then `python tools/render_flight_video.py <out>/flights/level_<motion>_<level>.csv <gif> --dpi 70 --fps 12 --speed 3` (from `cpp/`; flights of `fine2m_bonus4` seed 4: straight 0, circle 7 and 10, figure_eight 7) |
 | `docs/figures/overview.png` | hand-written `docs/figures/overview.svg`, crops of the GIF frames above (`ov_*.png`) |
 
 `model.zip` is committed for `calm_seed0` and `windy_seed2` only.

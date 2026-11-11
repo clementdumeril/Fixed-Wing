@@ -1,15 +1,22 @@
 # Fixed-Wing: reinforcement learning for low-level fixed-wing flight control
 
-![A tracking policy on PX4's advanced_plane (blue) following a moving point (black) on circles and figure-eights](cpp/results/reference_suite/trajectories.png)
+| Straight line, as in training | Circle, R 25 m (43° of bank) |
+| --- | --- |
+| ![Straight line](docs/media/straight.gif) | ![Circle at 43 degrees of bank](docs/media/circle_43deg.gif) |
+| **Figure-eight, up to 43° of bank** | **Circle, R 9 m (69°): where it breaks** |
+| ![Figure-eight](docs/media/figure_eight_43deg.gif) | ![Circle at 69 degrees of bank](docs/media/circle_69deg.gif) |
 
-*A SAC policy on PX4's `advanced_plane` (blue) following a moving point (black). It was trained on points that fly
-straight; the tightest circle and figure-eight (right) are beyond what it can fly. Simulation.*
+*A SAC policy flying PX4's `advanced_plane` (blue, drawn 10 times larger than its span) after a moving point (black),
+in simulation, 3 times real speed. Right of each: distance to the point and airspeed. Trained only on points that fly
+straight; first test flight of seed 4 of `fine2m_bonus4` at each level
+([`reference_suite_fine`](cpp/results/reference_suite_fine/README.md)).*
 
 A fixed-wing flight simulator I wrote in Python and C++ (RLtools), in which SAC policies fly the four control surfaces
 at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulation only.
 
 - Following a moving point flying straight on PX4's `advanced_plane`: 1.8 m position error (RMS) and 98% of test
-  flights completed, over 10 training seeds.
+  flights completed, over 10 training seeds, down from 9.8 m with the L2F reward.
+- Points that turn: 2.0 m on a 300 m circle, 4.4 m at 21° of bank, 7.3 m at 43°; past 60° of bank the policy fails.
 - The lab's 83 g E-flite UMX Eratix, modeled from its specs: SAC flies it after 2.4 min of training and completes 99%
   of test flights after the full 18 min run.
 - The trained policy flies the airplane in PX4 SITL and Gazebo through a ROS 2 offboard node at 50 Hz. An
@@ -18,6 +25,51 @@ at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulatio
 [Detailed results](docs/RESULTS.md) · [Reward and method](docs/method.md) · [C++ port and PX4 SITL](cpp/README.md) ·
 [Eratix model](docs/eratix_model.md) · [Components](docs/reproduce.md) ·
 Related: [WingJEPA](https://github.com/clementdumeril/WingJEPA), [GeneticWing](https://github.com/clementdumeril/GeneticWing)
+
+## Pipeline
+
+```mermaid
+flowchart LR
+    A["Flight data<br/>(not yet)"] -->|"identification<br/>(IROS 2024 method)"| B["Airframe model"]
+    G["Gazebo AdvancedLiftDrag<br/>coefficients, or specs"] --> B
+    B --> C["6-DOF simulator<br/>L2F structure, C++ / RLtools"]
+    C --> D["SAC training<br/>L2F recipe, 4 M steps"]
+    D --> E["Best checkpoint<br/>(validation)"]
+    E --> F["Tests: 100 flights,<br/>points that accelerate"]
+    E --> H["PX4 SITL in Gazebo<br/>ROS 2 node, 50 Hz"]
+    H -.-> I["Real airplane<br/>(not yet)"]
+```
+
+1. **Model.** The `advanced_plane` uses the coefficients Gazebo simulates it with (AdvancedLiftDrag); the Eratix comes
+   from its specs. Identifying a real airplane from its flights, as L2F's authors do for quadrotors (Eschmann, Albani,
+   Loianno, IROS 2024), is the next step and is not done here.
+2. **Simulator.** 6-DOF rigid body, actuator lag and latency, RK4 at 50 Hz, in the structure of L2F (parameters, state,
+   observe / reward / terminate), so that RLtools trains on it as on its quadrotor.
+3. **Training.** SAC with L2F's update intervals and batch, asymmetric actor-critic, random starts (roll ±60°), 4 M
+   steps: 16 min on one core. Reward: L2F's form (2 minus squared costs, gated curriculum of the weights), with a
+   velocity target toward the point, a fine-scale position input and a bonus for staying close
+   ([method](docs/method.md)).
+4. **Selection.** Every 50 k steps a validation flight set; the kept actor is the most precise one with at least 97 %
+   of flights completed.
+5. **Tests.** 100 flights from level and from random starts on a straight line, then circles, helices, figure-eights
+   and speed changes with the acceleration swept past what the airplane can follow.
+6. **Deployment.** The actor is exported as C++ and flown in PX4 SITL; the real airplane is not flown yet.
+
+## Results
+
+![Tracking error after each change of the training](docs/figures/error_reduction.png)
+
+From the L2F reward (9.8 m) to 1.8 m, each change kept: a stronger velocity target toward the point (K 0.1 to 0.3 /s),
+the position error also seen on a 2 m scale with a bonus for being close, the precise checkpoint choice, and a larger
+bonus weight. What is left is a steady offset of about 1 m per axis (behind, sideways, altitude) with 0.1 m of motion
+around it ([`fine_px4plane`](cpp/results/fine_px4plane/README.md)). Script: `cpp/tools/plot_error_reduction.py`.
+
+![Success and error against the acceleration of the point](cpp/results/reference_suite_fine/compare.png)
+
+When the point turns or changes speed, the error grows as a lag behind it (5.6 m behind at 43° of bank): the policy
+sees the point's position and velocity, not its acceleration, and never trained on a turning point. The more precise
+policies also fail earlier past 60° of bank (48 % of circles completed at 69°, against 72 % for the L2F reward).
+Training on accelerating points, with the point's acceleration in the observation, is the next step.
 
 ## How it works
 
@@ -29,6 +81,7 @@ Related: [WingJEPA](https://github.com/clementdumeril/WingJEPA), [GeneticWing](h
   sideslip and the true wind.
 - Tracking task: the policy sees its position error to the point (also on a fine 2 m scale) and its velocity error;
   the reward pushes its velocity toward the point (gain 0.3 /s) and adds a bonus for staying close.
+- Videos: `cpp/tools/render_flight_video.py` turns recorded flights into a 3D animation (GIF or MP4).
 - Deployment: the actor is exported as plain C++ and run in a ROS 2 node that sends actuator commands to PX4 over
   uXRCE-DDS.
 
