@@ -48,7 +48,7 @@ and the last actors stay at 3.5 m. Source: [`cpp/results/fine_px4plane`](../cpp/
 
 Training 8M steps instead of 4M takes the error to 1.4 ± 0.35 m (every seed between 1.1 and 2.3 m); the 8M runs repeat
 the 4M runs step for step up to 4M, so the gain is from the extra steps. 95 % of the training time is the network
-updates (2 % the airplane): critics of 64 or 32 neurons, as in L2F, train 1.7–2.7 times faster but give 3.2 m and
+updates (2 % the airplane): critics of 64 or 32 neurons, as in L2F, train 1.7–2.7 times faster but give 3.1 m and
 16 m. Source: [`cpp/results/speed_px4plane`](../cpp/results/speed_px4plane/README.md).
 
 ### Points that accelerate
