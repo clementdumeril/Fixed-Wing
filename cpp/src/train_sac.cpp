@@ -31,7 +31,9 @@
 //   --action-change-scale K: K times the weight of the command-change cost at every curriculum stage (default 1)
 //   --reward tanh|l2f|l2f-penalty: the reward form (default tanh, ours); l2f: the form and schedule of Learning to Fly
 //   in Seconds (survival 2 minus weighted squared errors, clipped at 0, weights grown every --curriculum-period);
-//   l2f-penalty: the same clipped at -2 with a termination penalty of 2 / (1 - gamma) (RewardConfig::l2f_form)
+//   l2f-penalty: the same clipped at -2 with a termination penalty of 2 / (1 - gamma) (RewardConfig::l2f_form);
+//   l2f-norm: l2f-penalty with the norms of the errors instead of their squares, as the L2F reward of RLtools at
+//   b32d9985 (RewardConfig::l2f_norms)
 //   --position-l1 W: with the L2F form, a cost of W per meter of distance to the point (RewardConfig::position_l1_weight)
 //   --position-bonus W [--position-bonus-scale S0 MIN]: with the L2F form, a bonus W exp(-(d / s)^2) for being close to
 //   the point, its scale s shrunk by the curriculum from S0 (default 10 m) to MIN (1 m) (RewardConfig::position_bonus_weight);
@@ -626,7 +628,7 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--fine-position-scale S] [--checkpoint-precise P N] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty|l2f-norm] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--fine-position-scale S] [--checkpoint-precise P N] [--profile]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -696,7 +698,7 @@ int run(int argc, char** argv){
     if(curriculum_period == 0 || curriculum_period % 10000 != 0) throw std::runtime_error("--curriculum-period must be a positive multiple of 10000");
     if(checkpoint_interval % N_ENVIRONMENTS != 0) throw std::runtime_error("--checkpoint-interval must be a multiple of the number of airplanes");
     if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
-    if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty") throw std::runtime_error("--reward must be tanh, l2f or l2f-penalty");
+    if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty" && reward_form != "l2f-norm") throw std::runtime_error("--reward must be tanh, l2f, l2f-penalty or l2f-norm");
     if(position_l1 != 0 && reward_form == "tanh") throw std::runtime_error("--position-l1 needs --reward l2f or l2f-penalty");
     if(precise_min_success < 0 || precise_min_success > 1) throw std::runtime_error("--checkpoint-precise needs 0 <= P <= 1");
     if(precise_min_success > 0 && checkpoint_interval == 0) throw std::runtime_error("--checkpoint-precise needs --checkpoint-interval");
@@ -761,7 +763,8 @@ int run(int argc, char** argv){
             c->position_l1_weight = position_l1;  // constant over the curriculum
             c->position_bonus_weight = position_bonus;
             c->sideslip_weight = T_ENV(0.3);  // constant: L2F has no sideslip term, an airplane needs one
-            if(reward_form == "l2f-penalty"){
+            c->l2f_norms = reward_form == "l2f-norm";
+            if(reward_form == "l2f-penalty" || reward_form == "l2f-norm"){
                 c->l2f_floor = -c->l2f_survival;
                 // ending a flight is never better than staying at the floor for the rest of it
                 c->l2f_termination_penalty = c->l2f_survival / (1 - T_ENV(FW_GAMMA));

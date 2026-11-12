@@ -798,12 +798,16 @@ namespace fixed_wing{
         T velocity_error = norm3(e_guided);
         if(c.l2f_form){
             auto sq = [](T x){ return x * x; };
+            // l2f_norms: each term is the norm itself (distance, speed error, |sideslip|, command change), as in the
+            // squared reward of RLtools' L2F environment at b32d9985 (l2f/parameters/reward_functions/squared: despite
+            // its name, sqrt(x^2 + y^2 + z^2) for the position and velocity, |action change|), instead of its square
+            auto term = [&](T x){ return c.l2f_norms ? std::abs(x) : x * x; };
             T margin = std::fmin(alpha_excess(alpha, c) / c.alpha_margin_scale, T(1));
-            T cost = c.position_weight * sq(position_error / c.position_scale)
-                   + c.velocity_weight * sq(velocity_error / c.velocity_scale)
-                   + c.sideslip_weight * sq(beta / c.sideslip_scale)
-                   + c.action_change_weight * action_change_squared
-                   + c.alpha_margin_weight * margin * margin
+            T cost = c.position_weight * term(position_error / c.position_scale)
+                   + c.velocity_weight * term(velocity_error / c.velocity_scale)
+                   + c.sideslip_weight * term(beta / c.sideslip_scale)
+                   + c.action_change_weight * (c.l2f_norms ? std::sqrt(action_change_squared) : action_change_squared)
+                   + c.alpha_margin_weight * term(margin)
                    + c.position_l1_weight * (std::sqrt(position_error * position_error + c.position_l1_delta * c.position_l1_delta) - c.position_l1_delta);
             T bonus = c.position_bonus_weight * std::exp(-sq(position_error / c.position_bonus_scale));
             return std::fmax(c.l2f_survival - cost + bonus, c.l2f_floor);
@@ -855,6 +859,17 @@ namespace fixed_wing{
         if constexpr(FW_TRACKING){
             T e_position[3], e_velocity[3];
             tracking_errors(next, e_position, e_velocity);
+            if(config.reward.l2f_norms){
+                // the errors as the critic observation stores them (body frame, position clipped at 200 m per axis), so
+                // that the curriculum recomputes the same reward: the linear cost still grows beyond 200 m, where the
+                // squared one is already at the floor
+                Measurements<T> m = measurements(p, next.body);
+                T body_position[3], body_velocity[3];
+                rotate_inverse(m.R, e_position, body_position);
+                rotate_inverse(m.R, e_velocity, body_velocity);
+                for(int i = 0; i < 3; i++) body_position[i] = clip(body_position[i], T(-200), T(200));
+                return reward_from_tracking_errors(body_position, body_velocity, air.beta, air.alpha, change, deviation, config.reward);
+            }
             return reward_from_tracking_errors(e_position, e_velocity, air.beta, air.alpha, change, deviation, config.reward);
         }
         else{
