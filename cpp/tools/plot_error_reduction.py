@@ -21,6 +21,7 @@ STEPS = [  # label, folder, changed by this repository
     ("+ precise\ncheckpoint choice", "results/fine_px4plane/second_run/fine2m_bonus1", True),
     ("bonus\nweight 2", "results/fine_px4plane/second_run/fine2m_bonus2", True),
     ("bonus\nweight 4", "results/fine_px4plane/third_run/fine2m_bonus4", True),
+    ("8M steps\ninstead of 4M", "results/speed_px4plane/c128_8M", True),
 ]
 INK, MUTED, GRID, BLUE, GREY = "#1a1a1a", "#5a5955", "#ebeae6", "#2a78d6", "#b9b7b0"
 
@@ -29,7 +30,7 @@ def main():
     out = sys.argv[1]
     plt.rcParams.update({"font.size": 10, "axes.edgecolor": MUTED, "xtick.color": INK, "ytick.color": MUTED,
                          "text.color": INK, "axes.labelcolor": INK})
-    fig, ax = plt.subplots(figsize=(9, 4.2))
+    fig, ax = plt.subplots(figsize=(10, 4.2))
     for i, (label, folder, ours) in enumerate(STEPS):
         runs = sorted(glob.glob(folder + "/seed*"))
         e = np.array([json.load(open(r + "/evaluation_best.json"))["position_rmse"] for r in runs])

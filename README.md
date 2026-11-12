@@ -14,7 +14,7 @@ straight; first test flight of seed 4 of `fine2m_bonus4` at each level
 A fixed-wing flight simulator I wrote in Python and C++ (RLtools), in which SAC policies fly the four control surfaces
 at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulation only.
 
-- Following a moving point flying straight on PX4's `advanced_plane`: 1.8 m position error (RMS) and 98% of test
+- Following a moving point flying straight on PX4's `advanced_plane`: 1.4 m position error (RMS) and 98% of test
   flights completed, over 10 training seeds, down from 9.8 m with the L2F reward.
 - Points that turn: 2.0 m on a 300 m circle, 4.4 m at 21° of bank, 7.3 m at 43°; past 60° of bank the policy fails.
 - The lab's 83 g E-flite UMX Eratix, modeled from its specs: SAC flies it after 2.4 min of training and completes 99%
@@ -33,7 +33,7 @@ flowchart LR
     A["Flight data<br/>(not yet)"] -->|"identification<br/>(IROS 2024 method)"| B["Airframe model"]
     G["Gazebo AdvancedLiftDrag<br/>coefficients, or specs"] --> B
     B --> C["6-DOF simulator<br/>L2F structure, C++ / RLtools"]
-    C --> D["SAC training<br/>L2F recipe, 4 M steps"]
+    C --> D["SAC training<br/>L2F recipe, 8 M steps"]
     D --> E["Best checkpoint<br/>(validation)"]
     E --> F["Tests: 100 flights,<br/>points that accelerate"]
     E --> H["PX4 SITL in Gazebo<br/>ROS 2 node, 50 Hz"]
@@ -45,8 +45,8 @@ flowchart LR
    Loianno, IROS 2024), is the next step and is not done here.
 2. **Simulator.** 6-DOF rigid body, actuator lag and latency, RK4 at 50 Hz, in the structure of L2F (parameters, state,
    observe / reward / terminate), so that RLtools trains on it as on its quadrotor.
-3. **Training.** SAC with L2F's update intervals and batch, asymmetric actor-critic, random starts (roll ±60°), 4 M
-   steps: 16 min on one core. Reward: L2F's form (2 minus squared costs, gated curriculum of the weights), with a
+3. **Training.** SAC with L2F's update intervals and batch, asymmetric actor-critic, random starts (roll ±60°), 8 M
+   steps: 32 min on one core, 95 % of it in the network updates. Reward: L2F's form (2 minus squared costs, gated curriculum of the weights), with a
    velocity target toward the point, a fine-scale position input and a bonus for staying close
    ([method](docs/method.md)).
 4. **Selection.** Every 50 k steps a validation flight set; the kept actor is the most precise one with at least 97 %
@@ -59,10 +59,12 @@ flowchart LR
 
 ![Tracking error after each change of the training](docs/figures/error_reduction.png)
 
-From the L2F reward (9.8 m) to 1.8 m, each change kept: a stronger velocity target toward the point (K 0.1 to 0.3 /s),
-the position error also seen on a 2 m scale with a bonus for being close, the precise checkpoint choice, and a larger
-bonus weight. What is left is a steady offset of about 1 m per axis (behind, sideways, altitude) with 0.1 m of motion
-around it ([`fine_px4plane`](cpp/results/fine_px4plane/README.md)). Script: `cpp/tools/plot_error_reduction.py`.
+From the L2F reward (9.8 m) to 1.4 m, each change kept: a stronger velocity target toward the point (K 0.1 to 0.3 /s),
+the position error also seen on a 2 m scale with a bonus for being close, the precise checkpoint choice, a larger
+bonus weight and twice the steps. What is left is a steady offset of about 1 m per axis (behind, sideways, altitude)
+with 0.1 m of motion around it ([`fine_px4plane`](cpp/results/fine_px4plane/README.md)). L2F's smaller critics (32 or
+64 instead of 128) train 1.7–2.7 times faster but lose the precision
+([`speed_px4plane`](cpp/results/speed_px4plane/README.md)). Script: `cpp/tools/plot_error_reduction.py`.
 
 ![Success and error against the acceleration of the point](cpp/results/reference_suite_fine/compare.png)
 

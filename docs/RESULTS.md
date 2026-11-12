@@ -25,7 +25,8 @@ intervals and batch, L2F reward form, 4 M steps, best checkpoint, 10 seeds.
 | velocity correction K = 0.3 /s (`guidance03`) | 98.7 % | 97.2 % | 6.6 ± 1.6 m | 0.28 m/s | 3.2 m | 4.6 m | 31 % |
 | K = 0.3 /s, fine-scale error input + adaptive closeness bonus (`fine2m_bonus_adaptive`) | 98.0 % | 98.4 % | 4.9 ± 1.0 m | 0.49 m/s | | | 62 % |
 | same, most precise checkpoint with >= 97 % validation success, bonus weight 2 (`fine2m_bonus2`) | 97.9 % | 95.8 % | 2.4 ± 0.4 m | 0.39 m/s | 0.8 m | 1.1 m | 96 % |
-| same, bonus weight 4 (`fine2m_bonus4`) | 97.6 % | 96.8 % | **1.8 ± 0.5 m** | 0.31 m/s | 0.9 m | 0.8 m | 97 % |
+| same, bonus weight 4 (`fine2m_bonus4`) | 97.6 % | 96.8 % | 1.8 ± 0.5 m | 0.31 m/s | 0.9 m | 0.8 m | 97 % |
+| same, 8M steps instead of 4M (`c128_8M`) | 98.4 % | 96.7 % | **1.4 ± 0.35 m** | | | | |
 
 Source: [`cpp/results/precision_px4plane`](../cpp/results/precision_px4plane/README.md) (`guidance03/seed*/evaluation_best*.json`)
 and [`cpp/results/l2f_reward_px4plane`](../cpp/results/l2f_reward_px4plane/README.md). That page also has the variants
@@ -44,6 +45,11 @@ The last two rows keep as best checkpoint the most precise one with at least 97 
 and 0.7 m with 0.1 m of motion around it; the cost is rougher commands (0.041 per step instead of 0.021 with weight 2),
 and the last actors stay at 3.5 m. Source: [`cpp/results/fine_px4plane`](../cpp/results/fine_px4plane/README.md)
 (`second_run/fine2m_bonus2`, `third_run/fine2m_bonus4`).
+
+Training 8M steps instead of 4M takes the error to 1.4 ± 0.35 m (every seed between 1.1 and 2.3 m); the 8M runs repeat
+the 4M runs step for step up to 4M, so the gain is from the extra steps. 95 % of the training time is the network
+updates (2 % the airplane): critics of 64 or 32 neurons, as in L2F, train 1.7–2.7 times faster but give 3.2 m and
+16 m. Source: [`cpp/results/speed_px4plane`](../cpp/results/speed_px4plane/README.md).
 
 ### Points that accelerate
 
