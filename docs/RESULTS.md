@@ -51,6 +51,10 @@ the 4M runs step for step up to 4M, so the gain is from the extra steps. 95 % of
 updates (2 % the airplane): critics of 64 or 32 neurons, as in L2F, train 1.7–2.7 times faster but give 3.1 m and
 16 m. Source: [`cpp/results/speed_px4plane`](../cpp/results/speed_px4plane/README.md).
 
+The same terms as norms instead of squares, as in RLtools' L2F reward (`--reward l2f-norm`), with the closeness bonus:
+1.4 ± 0.45 m in 4M steps (16.7 min instead of 32), the last actors at 2.2 m instead of 3.5 m. Without the bonus the
+norms give 3.9 m: they do not replace it. Source: [`cpp/results/reward_px4plane`](../cpp/results/reward_px4plane/README.md).
+
 ### Points that accelerate
 
 Trained only on points that fly straight, `fine2m_bonus4` keeps most of its precision when the point turns or

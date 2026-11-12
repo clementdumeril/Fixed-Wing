@@ -15,7 +15,8 @@ A fixed-wing flight simulator I wrote in Python and C++ (RLtools), in which SAC 
 at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulation only.
 
 - Following a moving point flying straight on PX4's `advanced_plane`: 1.4 m position error (RMS) and 98% of test
-  flights completed, over 10 training seeds, down from 9.8 m with the L2F reward.
+  flights completed, over 10 training seeds, down from 9.8 m with the L2F reward; 16 min of training with the
+  reward terms as norms, as in RLtools' L2F reward.
 - Points that turn: 2.0 m on a 300 m circle, 4.4 m at 21° of bank, 7.3 m at 43°; past 60° of bank the policy fails.
 - The lab's 83 g E-flite UMX Eratix, modeled from its specs: SAC flies it after 2.4 min of training and completes 99%
   of test flights after the full 18 min run.
