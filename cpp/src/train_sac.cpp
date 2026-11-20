@@ -86,6 +86,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -93,6 +94,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <random>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -215,6 +217,7 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
 using LOOP_CONFIG = rlt::rl::algorithms::sac::loop::core::Config<TYPE_POLICY, TI, RNG, ENVIRONMENT, LOOP_CORE_PARAMETERS>;
 #endif
 using LOOP_STATE = LOOP_CONFIG::State<LOOP_CONFIG>;
+static_assert(!FW_DISTURBANCES || (FW_TRACKING && FW_AIRPLANE == 1), "the train_sac_*_wind targets fly the tracking task with the advanced_plane");
 
 // ----- reward curriculum (environment.RewardCurriculum, gated as asymmetric_sac.CurriculumCallback) ---------------------
 struct Curriculum{
@@ -247,7 +250,9 @@ struct Curriculum{
     // the mean distance to the point over the last period of training flights (never larger than before, never below
     // bonus_scale_min), so that the bonus always reaches where the policy flies. bonus_scale is its current value
     T_ENV bonus_adaptive = 0, bonus_scale = 10;
+    bool simple = false;
     fixed_wing::RewardConfig<T_ENV> at_stage(int stage) const {
+        if(simple) return initial;
         if(l2f){
             fixed_wing::RewardConfig<T_ENV> c = initial;
             c.position_weight = std::fmin(L2F_POSITION[0] * std::pow(T_ENV(1.2), stage), L2F_POSITION[1]);
@@ -398,6 +403,7 @@ void profiled_step(DEVICE& device, LOOP_STATE& ts, Profile& p){
 struct Window{
     // statistics of the last n transitions of the replay buffer
     double task_error = 0, episode_length = 0, episode_return = 0;
+    double terminated_fraction = 0;
 };
 
 template <typename RUNNER>
@@ -405,7 +411,7 @@ Window window(const RUNNER& runner, TI n){
     // task error over the last n transitions (n / N of each airplane's buffer); length and return of the episodes
     // that ended inside them
     Window w;
-    double error = 0, lengths = 0, returns = 0, episodes = 0;
+    double error = 0, lengths = 0, returns = 0, episodes = 0, terminated = 0;
     TI available = 0;
     for(TI e = 0; e < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; e++){
         const auto& rb = rlt::get(runner.replay_buffers, 0, e);
@@ -420,7 +426,12 @@ Window window(const RUNNER& runner, TI n){
             episode_steps += 1;
             episode_rewards += rlt::get(rb.rewards, i, 0);
             if(rlt::get(rb.truncated, i, 0) > T(0.5)){
-                if(started){ lengths += episode_steps; returns += episode_rewards; episodes += 1; }
+                if(started){
+                    lengths += episode_steps;
+                    returns += episode_rewards;
+                    episodes += 1;
+                    terminated += rlt::get(rb.terminated, i, 0) > T(0.5) ? 1 : 0;
+                }
                 started = true;
                 episode_steps = 0;
                 episode_rewards = 0;
@@ -431,6 +442,7 @@ Window window(const RUNNER& runner, TI n){
     if(episodes > 0){
         w.episode_length = lengths / episodes;
         w.episode_return = returns / episodes;
+        w.terminated_fraction = terminated / episodes;
     }
     return w;
 }
@@ -626,9 +638,171 @@ void save_actor(DEVICE& device, const ACTOR& actor, const std::filesystem::path&
     rlt::free(device, forward);
 }
 
+struct Flight{
+    ENVIRONMENT::Parameters parameters;
+    ENVIRONMENT::State start;
+    std::uint64_t turbulence_seed;
+};
+
+std::vector<Flight> sample_flights(DEVICE& device, const fixed_wing::TaskConfig<T_ENV>& config, TI seed){
+    ENVIRONMENT env;
+    rlt::init(device, env);
+    env.config = config;
+    RNG rng;
+    rlt::malloc(device, rng);
+    rlt::init(device, rng, seed);
+    std::vector<Flight> flights(N_SCENARIOS);
+    for(TI k = 0; k < N_SCENARIOS; k++){
+        rlt::sample_initial_parameters(device, env, flights[k].parameters, rng);
+        rlt::sample_initial_state(device, env, flights[k].parameters, flights[k].start, rng);
+        flights[k].turbulence_seed = std::uint64_t(seed) * 1000 + k;
+    }
+    rlt::free(device, rng);
+    return flights;
+}
+
+fixed_wing::TaskConfig<T_ENV> calm_config(fixed_wing::TaskConfig<T_ENV> config){
+    config.wind_speed_max = 0;
+    config.turbulence_intensity_max = 0;
+    config.gust_rate = 0;
+    config.thermal_fraction = 0;
+    return config;
+}
+
+struct FlightGroup{
+    int flights = 0, completed = 0;
+    double rmse_sum = 0, energy = 0, power_sum = 0, change_sum = 0;
+    std::map<std::string, int> failures;
+};
+
+template <typename ACTOR>
+std::string evaluate_flights(DEVICE& device, const ACTOR& actor, const std::vector<Flight>& flights,
+                             const fixed_wing::TaskConfig<T_ENV>& config, TI n_steps, RNG& rng,
+                             const std::filesystem::path& flights_csv, EvaluationSummary* summary = nullptr){
+    using EVAL_ACTOR = typename ACTOR::template CHANGE_BATCH_SIZE<TI, N_SCENARIOS>::template CHANGE_CAPABILITY<rlt::nn::capability::Forward<true>>;
+    typename EVAL_ACTOR::template State<true> actor_state;
+    typename EVAL_ACTOR::template Buffer<true> actor_buffer;
+    rlt::Matrix<rlt::matrix::Specification<T, TI, N_SCENARIOS, ENVIRONMENT::Observation::DIM>> observations;
+    rlt::Matrix<rlt::matrix::Specification<T, TI, N_SCENARIOS, ENVIRONMENT::ACTION_DIM>> actions;
+    rlt::malloc(device, actor_state);
+    rlt::malloc(device, actor_buffer);
+    rlt::malloc(device, observations);
+    rlt::malloc(device, actions);
+    rlt::reset(device, actor, actor_state, rng);
+    std::vector<ENVIRONMENT::State> states(N_SCENARIOS);
+    std::vector<int> reason(N_SCENARIOS, 0);
+    std::vector<TI> steps_flown(N_SCENARIOS, 0);
+    std::vector<double> squared_error(N_SCENARIOS, 0), energy(N_SCENARIOS, 0), change(N_SCENARIOS, 0);
+    std::vector<std::mt19937_64> generators(N_SCENARIOS);
+    for(TI k = 0; k < N_SCENARIOS; k++){
+        states[k] = flights[k].start;
+        generators[k].seed(flights[k].turbulence_seed);
+    }
+    std::vector<std::normal_distribution<T_ENV>> standard_normals(N_SCENARIOS, std::normal_distribution<T_ENV>(0, 1));
+    std::ofstream csv;
+    if(!flights_csv.empty()) csv.open(flights_csv);
+    csv << "flight,t,x,y,altitude,reference_x,reference_y,reference_altitude,distance,airspeed,alpha_deg,beta_deg,roll_deg,"
+           "wind_x,wind_y,wind_z,aileron,elevator,rudder,throttle,power_w,thermals,termination\n";
+    const T_ENV deg = 180 / fixed_wing::PI;
+    for(TI step = 0; step < n_steps; step++){
+        for(TI k = 0; k < N_SCENARIOS; k++){
+            fixed_wing::observe_actor(flights[k].parameters, states[k], [&](int j, T_ENV v){ rlt::set(observations, k, j, T(v)); });
+        }
+        auto input = rlt::to_tensor(device, observations);
+        auto output = rlt::to_tensor(device, actions);
+        rlt::evaluate_step(device, actor, input, actor_state, output, actor_buffer, rng, rlt::Mode<rlt::mode::Evaluation<>>{});
+        for(TI k = 0; k < N_SCENARIOS; k++){
+            if(reason[k] != 0) continue;
+            const auto& p = flights[k].parameters;
+            T_ENV a[4], normals[fixed_wing::N_TURBULENCE] = {};
+            for(int i = 0; i < 4; i++) a[i] = fixed_wing::clip(T_ENV(rlt::get(actions, k, i)), T_ENV(-1), T_ENV(1));
+            if(fixed_wing::turbulent(p)){
+                for(auto& n: normals) n = standard_normals[k](generators[k]);
+            }
+            ENVIRONMENT::State next;
+            fixed_wing::simulate_moving_task(p, states[k], a, normals, next);
+            reason[k] = fixed_wing::termination(p, next, config);
+            steps_flown[k]++;
+            T_ENV e_position[3], e_velocity[3];
+            fixed_wing::tracking_errors(next, e_position, e_velocity);
+            T_ENV distance = fixed_wing::norm3(e_position);
+            squared_error[k] += distance * distance;
+            T_ENV power = fixed_wing::advanced_propeller_power(p, next.body);
+            energy[k] += power * p.dt;
+            double action_change = 0;
+            for(int i = 0; i < 4; i++) action_change += std::abs(a[i] - states[k].action_history[fixed_wing::ACTION_HISTORY - 1][i]);
+            change[k] += action_change / 4;
+            if(k < N_RECORDED){
+                auto m = fixed_wing::measurements(p, next.body);
+                auto air = fixed_wing::air_data(p, next.body);
+                T_ENV wind[3];
+                fixed_wing::local_wind(p, next.body, m.R, wind);
+                csv << k << "," << (step + 1) * p.dt << "," << next.body.position[0] << "," << next.body.position[1] << ","
+                    << next.body.position[2] << "," << next.reference_position[0] << "," << next.reference_position[1] << ","
+                    << next.reference_position[2] << "," << distance << "," << air.airspeed << "," << air.alpha * deg << ","
+                    << air.beta * deg << "," << std::atan2(m.R[2][1], m.R[2][2]) * deg;
+                for(int i = 0; i < 3; i++) csv << "," << wind[i];
+                for(int i = 0; i < 4; i++) csv << "," << a[i];
+                csv << "," << power << "," << (p.thermals.count > 0 ? 1 : 0) << "," << reason[k] << "\n";
+            }
+            states[k] = next;
+        }
+    }
+    const char* names[] = {"", "diverged", "low_altitude", "alpha", "airspeed", "altitude", "position"};
+    FlightGroup groups[3];
+    for(TI k = 0; k < N_SCENARIOS; k++){
+        bool thermals = flights[k].parameters.thermals.count > 0;
+        for(int g: {0, thermals ? 1 : 2}){
+            FlightGroup& group = groups[g];
+            group.flights++;
+            group.power_sum += energy[k] / (steps_flown[k] * flights[k].parameters.dt);
+            if(reason[k] != 0){
+                group.failures[names[reason[k]]]++;
+                continue;
+            }
+            group.completed++;
+            group.rmse_sum += std::sqrt(squared_error[k] / steps_flown[k]);
+            group.energy += energy[k];
+            group.change_sum += change[k] / steps_flown[k];
+        }
+    }
+    auto group_json = [&](const FlightGroup& g){
+        std::ostringstream out;
+        auto over_completed = [&](double sum, double scale){
+            std::ostringstream value;
+            value << std::setprecision(10);
+            if(g.completed > 0) value << sum / g.completed * scale;
+            else value << "null";
+            return value.str();
+        };
+        out << std::setprecision(10) << "{\"flights\": " << g.flights << ", \"success_rate\": " << g.completed / double(std::max(g.flights, 1))
+            << ", \"position_rmse\": " << over_completed(g.rmse_sum, 1)
+            << ", \"energy_kj\": " << over_completed(g.energy, 0.001)
+            << ", \"mean_power_w\": " << g.power_sum / std::max(g.flights, 1)
+            << ", \"mean_action_change\": " << over_completed(g.change_sum, 1) << ", \"failures\": {";
+        bool first = true;
+        for(auto& [name, count]: g.failures){ out << (first ? "" : ", ") << "\"" << name << "\": " << count; first = false; }
+        out << "}}";
+        return out.str();
+    };
+    std::ostringstream json;
+    json << std::setprecision(10) << "{\n  \"duration_s\": " << n_steps * flights[0].parameters.dt
+         << ",\n  \"all\": " << group_json(groups[0]) << ",\n  \"with_thermals\": " << group_json(groups[1])
+         << ",\n  \"without_thermals\": " << group_json(groups[2]) << "\n}\n";
+    if(summary){
+        summary->success_rate = groups[0].completed / double(N_SCENARIOS);
+        summary->error = groups[0].completed > 0 ? groups[0].rmse_sum / groups[0].completed : std::numeric_limits<double>::infinity();
+    }
+    rlt::free(device, actor_state);
+    rlt::free(device, actor_buffer);
+    rlt::free(device, observations);
+    rlt::free(device, actions);
+    return json.str();
+}
+
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty|l2f-norm] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--fine-position-scale S] [--checkpoint-precise P N] [--profile]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty|l2f-norm] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--fine-position-scale S] [--checkpoint-precise P N] [--profile] [--reward simple] [--energy-weight W] [--energy-ramp START END] [--simple-constant C] [--distance-max D] [--reference-heading-max DEG] [--eval-duration S] [--calm] [--wind-max V] [--turbulence-max K] [--gust-rate R] [--thermal-fraction F] [--turn-fraction F]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -658,6 +832,18 @@ int run(int argc, char** argv){
     T_ENV bonus_adaptive = 0;  // --position-bonus-adaptive F
     T_ENV position_l1 = 0;  // --position-l1 W: weight per meter of the linear distance term (L2F reward form only)
     std::string reward_form = "tanh";  // tanh (ours), l2f (L2F form, floor 0), l2f-penalty (floor -2, termination penalty)
+    T_ENV energy_weight = 0;
+    T_ENV energy_ramp_start = 1000000, energy_ramp_end = 3000000;
+    T_ENV simple_constant = defaults.simple_constant;
+    T_ENV distance_max = 0;
+    T_ENV heading_max_deg = fixed_wing::TaskConfig<T_ENV>{}.course_change_max * 180 / fixed_wing::PI;
+    T_ENV eval_duration = 120;
+    const bool disturbed = FW_DISTURBANCES;
+    T_ENV wind_max = disturbed ? 6 : 0, turbulence_max = disturbed ? 1 : 0, gust_rate = disturbed ? 1 : 0;
+    T_ENV thermal_fraction = disturbed ? T_ENV(0.5) : 0, turn_fraction = disturbed ? T_ENV(0.5) : 0;
+    T_ENV randomization_mass = disturbed ? T_ENV(0.1) : 0, randomization_thrust = disturbed ? T_ENV(0.15) : 0;
+    T_ENV randomization_aerodynamics = disturbed ? T_ENV(0.1) : 0;
+    int latency_max = disturbed ? 2 : -1;
     // (the check of the value is after the options)
     bool profile = false;
     for(int i = 5; i < argc; i++){
@@ -677,6 +863,18 @@ int run(int argc, char** argv){
         else if(option == "--checkpoint-interval" && i + 1 < argc) checkpoint_interval = std::stoul(argv[++i]);
         else if(option == "--action-change-scale" && i + 1 < argc) action_change_scale = std::stod(argv[++i]);
         else if(option == "--reward" && i + 1 < argc) reward_form = argv[++i];
+        else if(option == "--energy-weight" && i + 1 < argc) energy_weight = std::stod(argv[++i]);
+        else if(option == "--energy-ramp" && i + 2 < argc){ energy_ramp_start = std::stod(argv[++i]); energy_ramp_end = std::stod(argv[++i]); }
+        else if(option == "--simple-constant" && i + 1 < argc) simple_constant = std::stod(argv[++i]);
+        else if(option == "--distance-max" && i + 1 < argc) distance_max = std::stod(argv[++i]);
+        else if(option == "--reference-heading-max" && i + 1 < argc) heading_max_deg = std::stod(argv[++i]);
+        else if(option == "--eval-duration" && i + 1 < argc) eval_duration = std::stod(argv[++i]);
+        else if(option == "--calm"){ wind_max = 0; turbulence_max = 0; gust_rate = 0; thermal_fraction = 0; }
+        else if(option == "--wind-max" && i + 1 < argc) wind_max = std::stod(argv[++i]);
+        else if(option == "--turbulence-max" && i + 1 < argc) turbulence_max = std::stod(argv[++i]);
+        else if(option == "--gust-rate" && i + 1 < argc) gust_rate = std::stod(argv[++i]);
+        else if(option == "--thermal-fraction" && i + 1 < argc) thermal_fraction = std::stod(argv[++i]);
+        else if(option == "--turn-fraction" && i + 1 < argc) turn_fraction = std::stod(argv[++i]);
         else if(option == "--position-l1" && i + 1 < argc) position_l1 = std::stod(argv[++i]);
         else if(option == "--position-bonus" && i + 1 < argc) position_bonus = std::stod(argv[++i]);
         else if(option == "--position-bonus-adaptive" && i + 1 < argc) bonus_adaptive = std::stod(argv[++i]);
@@ -698,7 +896,16 @@ int run(int argc, char** argv){
     if(curriculum_period == 0 || curriculum_period % 10000 != 0) throw std::runtime_error("--curriculum-period must be a positive multiple of 10000");
     if(checkpoint_interval % N_ENVIRONMENTS != 0) throw std::runtime_error("--checkpoint-interval must be a multiple of the number of airplanes");
     if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
-    if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty" && reward_form != "l2f-norm") throw std::runtime_error("--reward must be tanh, l2f, l2f-penalty or l2f-norm");
+    if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty" && reward_form != "l2f-norm" && reward_form != "simple") throw std::runtime_error("--reward must be tanh, l2f, l2f-penalty, l2f-norm or simple");
+    const bool simple = reward_form == "simple";
+    if(simple && !FW_TRACKING) throw std::runtime_error("--reward simple is for the tracking task");
+    if(!simple && (energy_weight != 0 || simple_constant != defaults.simple_constant)) throw std::runtime_error("--energy-weight and --simple-constant need --reward simple");
+    if(energy_weight < 0 || energy_ramp_start < 0 || energy_ramp_end < energy_ramp_start) throw std::runtime_error("--energy-weight needs W >= 0, --energy-ramp 0 <= START <= END");
+    if(distance_max < 0 || heading_max_deg < 0 || heading_max_deg > 180) throw std::runtime_error("--distance-max needs D >= 0, --reference-heading-max 0 <= DEG <= 180");
+    if(eval_duration <= 0) throw std::runtime_error("--eval-duration must be positive");
+    if(wind_max < 0 || turbulence_max < 0 || gust_rate < 0 || thermal_fraction < 0 || thermal_fraction > 1 || turn_fraction < 0 || turn_fraction > 1) throw std::runtime_error("disturbance options out of range");
+    if(!FW_DISTURBANCES && (turbulence_max > 0 || gust_rate > 0 || thermal_fraction > 0)) throw std::runtime_error("--turbulence-max, --gust-rate and --thermal-fraction need a train_sac_*_wind target");
+    if(turn_fraction > 0 && !FW_TRACKING) throw std::runtime_error("--turn-fraction is for the tracking task");
     if(position_l1 != 0 && reward_form == "tanh") throw std::runtime_error("--position-l1 needs --reward l2f or l2f-penalty");
     if(precise_min_success < 0 || precise_min_success > 1) throw std::runtime_error("--checkpoint-precise needs 0 <= P <= 1");
     if(precise_min_success > 0 && checkpoint_interval == 0) throw std::runtime_error("--checkpoint-precise needs --checkpoint-interval");
@@ -724,7 +931,15 @@ int run(int argc, char** argv){
         << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
         << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
         << ",\n  \"checkpoint_interval\": " << checkpoint_interval
-        << ",\n  \"checkpoint_precise\": [" << precise_min_success << ", " << precise_after << "],\n  \"profile\": " << (profile ? "true" : "false") << "\n}\n";
+        << ",\n  \"checkpoint_precise\": [" << precise_min_success << ", " << precise_after << "],\n  \"profile\": " << (profile ? "true" : "false")
+        << ",\n  \"energy_weight\": " << energy_weight << ",\n  \"energy_ramp\": [" << energy_ramp_start << ", " << energy_ramp_end << "]"
+        << ",\n  \"simple_constant\": " << simple_constant << ",\n  \"distance_max\": " << distance_max
+        << ",\n  \"reference_heading_max_deg\": " << heading_max_deg << ",\n  \"eval_duration\": " << eval_duration
+        << ",\n  \"disturbances\": " << (FW_DISTURBANCES ? "true" : "false") << ",\n  \"wind_max\": " << wind_max
+        << ",\n  \"turbulence_max\": " << turbulence_max << ",\n  \"gust_rate_per_minute\": " << gust_rate
+        << ",\n  \"thermal_fraction\": " << thermal_fraction << ",\n  \"turn_fraction\": " << turn_fraction
+        << ",\n  \"randomization\": {\"mass\": " << randomization_mass << ", \"thrust\": " << randomization_thrust
+        << ", \"aerodynamics\": " << randomization_aerodynamics << ", \"latency_max\": " << latency_max << "}\n}\n";
 
     DEVICE device;
     rlt::init(device);
@@ -748,7 +963,19 @@ int run(int argc, char** argv){
         curriculum.initial.trim_weight = 0;
         curriculum.target.trim_weight = 0;
     }
-    if(reward_form != "tanh"){
+    auto energy_weight_at = [&](TI step){
+        if(energy_ramp_end <= energy_ramp_start) return T_ENV(step) >= energy_ramp_start ? energy_weight : T_ENV(0);
+        T_ENV progress = (T_ENV(step) - energy_ramp_start) / (energy_ramp_end - energy_ramp_start);
+        return energy_weight * fixed_wing::clip(progress, T_ENV(0), T_ENV(1));
+    };
+    if(simple){
+        curriculum.simple = true;
+        curriculum.n_stages = 0;
+        curriculum.initial.simple_form = true;
+        curriculum.initial.simple_constant = simple_constant;
+        curriculum.initial.energy_weight = energy_weight_at(0);
+    }
+    if(reward_form != "tanh" && !simple){
         // the L2F reward form and schedule (RewardConfig::l2f_form, Curriculum::l2f); the tracking scales
         // (--position-scale, velocity_scale), the velocity guidance and the stall margin stay as given
         if(!FW_TRACKING) throw std::runtime_error("--reward l2f is for the tracking task");
@@ -790,12 +1017,25 @@ int run(int argc, char** argv){
         config.reference_near_fraction = near_fraction;
         config.reference_near_offset_max = near_offset;
         config.fine_position_scale = fine_scale;
+        config.course_change_max = heading_max_deg * fixed_wing::PI / 180;
+        config.reference_distance_max = distance_max;
+        config.wind_speed_max = wind_max;
+        config.turbulence_intensity_max = turbulence_max;
+        config.gust_rate = gust_rate;
+        config.thermal_fraction = thermal_fraction;
+        config.reference_turn_fraction = turn_fraction;
+        config.randomization_mass = randomization_mass;
+        config.randomization_thrust = randomization_thrust;
+        config.randomization_aerodynamics = randomization_aerodynamics;
+        config.latency_steps_random_max = latency_max;
     }
     set_reward(curriculum.at_stage(stage));
+    const fixed_wing::TaskConfig<T_ENV> training_config = rlt::get(ts.off_policy_runner.envs, 0, 0).config;
 
     std::ofstream progress(out_dir / "progress.csv");
     progress << "time/total_timesteps,rollout/ep_len_mean,rollout/ep_rew_mean,"
-             << (FW_TRACKING ? "train/position_error_m" : "train/course_error_deg") << ",curriculum/stage,time/time_elapsed,curriculum/bonus_scale\n";
+             << (FW_TRACKING ? "train/position_error_m" : "train/course_error_deg") << ",curriculum/stage,time/time_elapsed,curriculum/bonus_scale"
+             << (simple ? ",curriculum/energy_weight,rollout/terminated_fraction" : "") << "\n";
     auto start = std::chrono::steady_clock::now();
     auto& runner = ts.off_policy_runner;
     TI next_check = curriculum.period;
@@ -805,6 +1045,7 @@ int run(int argc, char** argv){
     ACTOR best_actor;
     RNG validation_rng;
     std::vector<ENVIRONMENT::State> validation;
+    std::vector<Flight> validation_flights;
     std::ofstream checkpoints;
     double best_score = std::numeric_limits<double>::infinity();
     TI best_step = 0;
@@ -812,7 +1053,8 @@ int run(int argc, char** argv){
         rlt::malloc(device, best_actor);
         rlt::malloc(device, validation_rng);
         rlt::init(device, validation_rng, seed + 1);
-        validation = sampled_starts(device, 54321, fixed_wing::RANDOM);  // other flights than the tests (12345)
+        if constexpr(FW_DISTURBANCES) validation_flights = sample_flights(device, training_config, 54321);
+        else validation = sampled_starts(device, 54321, fixed_wing::RANDOM);  // other flights than the tests (12345)
         checkpoints.open(out_dir / "checkpoints.csv");
         checkpoints << "step,success_rate," << (FW_TRACKING ? "position_rmse" : "course_rmse_deg") << ",score\n";
     }
@@ -828,10 +1070,14 @@ int run(int argc, char** argv){
             Window w = window(runner, 50000);
             double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             progress << step << "," << w.episode_length << "," << w.episode_return << "," << w.task_error * TASK_ERROR_TO_UNIT
-                     << "," << stage << "," << elapsed << "," << curriculum.at_stage(stage).position_bonus_scale << std::endl;
+                     << "," << stage << "," << elapsed << "," << curriculum.at_stage(stage).position_bonus_scale;
+            if(simple) progress << "," << curriculum.initial.energy_weight << "," << w.terminated_fraction;
+            progress << std::endl;
             std::cout << "step " << step << "  episode length " << std::setprecision(4) << w.episode_length << "  return "
                       << w.episode_return << "  " << TASK_ERROR_NAME << " " << w.task_error * TASK_ERROR_TO_UNIT << " "
-                      << TASK_ERROR_UNIT << "  stage " << stage << "  " << std::setprecision(3) << step / elapsed << " steps/s" << std::endl;
+                      << TASK_ERROR_UNIT << "  stage " << stage << "  " << std::setprecision(3) << step / elapsed << " steps/s";
+            if(simple) std::cout << "  terminated " << w.terminated_fraction << "  energy weight " << curriculum.initial.energy_weight;
+            std::cout << std::endl;
         }
         if(step == 20000){  // before the first curriculum change
             double error = reward_recomputation_error(runner, curriculum.at_stage(stage));
@@ -853,6 +1099,13 @@ int run(int argc, char** argv){
                 changed = changed || scale != curriculum.bonus_scale;
                 curriculum.bonus_scale = scale;
             }
+            if(curriculum.simple){
+                T_ENV weight = energy_weight_at(step);
+                if(weight != curriculum.initial.energy_weight){
+                    curriculum.initial.energy_weight = weight;
+                    changed = true;
+                }
+            }
             if(changed){
                 set_reward(curriculum.at_stage(stage));
                 recompute_rewards(device, runner, curriculum.at_stage(stage));
@@ -861,7 +1114,12 @@ int run(int argc, char** argv){
         }
         if(checkpoint_interval > 0 && step % checkpoint_interval == 0){
             EvaluationSummary s;
-            evaluate(device, rlt::get_actor(ts), validation, validation_rng, {}, &s);
+            if constexpr(FW_DISTURBANCES){
+                evaluate_flights(device, rlt::get_actor(ts), validation_flights, training_config, ENVIRONMENT::EPISODE_STEP_LIMIT, validation_rng, {}, &s);
+            }
+            else{
+                evaluate(device, rlt::get_actor(ts), validation, validation_rng, {}, &s);
+            }
             double score = s.error + 1000 * (1 - s.success_rate);  // 10 per % of failed flights
             if(precise_min_success > 0){
                 // --checkpoint-precise: the error alone for the eligible checkpoints; the others after all of them,
@@ -894,10 +1152,29 @@ int run(int argc, char** argv){
         std::cout << "  (whole loop " << seconds / loop_steps * 1e6 << " per step)" << std::endl;
     }
     // test A: the Python scenarios, or for tracking normal flights (neutral start); test B: random starts
-    std::vector<ENVIRONMENT::State> test_a = FW_TRACKING ? sampled_starts(device, 12345, fixed_wing::NEUTRAL) : start_states(scenarios);
+    std::vector<ENVIRONMENT::State> test_a;
+    if constexpr(!FW_DISTURBANCES) test_a = FW_TRACKING ? sampled_starts(device, 12345, fixed_wing::NEUTRAL) : start_states(scenarios);
+    fixed_wing::TaskConfig<T_ENV> test_config = training_config;
+    test_config.episode_duration = eval_duration;
+    const TI test_steps = TI(std::lround(eval_duration * test_config.frequency));
+    std::vector<Flight> test_disturbed, test_calm;
+    if constexpr(FW_DISTURBANCES){
+        test_disturbed = sample_flights(device, test_config, 12345);
+        test_calm = sample_flights(device, calm_config(test_config), 12345);
+    }
     auto test = [&](const ACTOR& actor, const std::string& prefix){  // prefix "" for the final actor, "best" for the best
         std::string tag = prefix.empty() ? "" : "_" + prefix;
         save_actor(device, actor, out_dir / (prefix + (prefix.empty() ? "" : "_") + "actor.h"));
+        if constexpr(FW_DISTURBANCES){
+            std::string disturbed_result = evaluate_flights(device, actor, test_disturbed, test_config, test_steps, ts.rng,
+                                                            out_dir / ("flights" + tag + "_disturbed.csv"));
+            std::ofstream(out_dir / ("evaluation" + tag + "_disturbed.json")) << disturbed_result;
+            std::string calm_result = evaluate_flights(device, actor, test_calm, calm_config(test_config), test_steps, ts.rng,
+                                                       out_dir / ("flights" + tag + "_calm.csv"));
+            std::ofstream(out_dir / ("evaluation" + tag + "_calm.json")) << calm_result;
+            std::cout << (prefix.empty() ? "" : prefix + " actor:\n") << "disturbed:\n" << disturbed_result << "calm:\n" << calm_result;
+            return;
+        }
         std::string result = evaluate(device, actor, test_a, ts.rng, out_dir / ("flights" + tag + ".csv"));
         std::ofstream(out_dir / ("evaluation" + tag + ".json")) << result;
         std::string result_random = evaluate(device, actor, sampled_starts(device, 12345, fixed_wing::RANDOM), ts.rng,

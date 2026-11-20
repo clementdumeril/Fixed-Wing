@@ -18,3 +18,4 @@ export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib:${LD_LIBRARY_PATH:-}"
 cmake --build build -j "$SLURM_CPUS_PER_TASK"
 python tools/export_scenarios.py build/scenarios_calm.txt
 python tools/compare_with_python.py build/check
+python tools/compare_wind_with_python.py build/check_wind

@@ -1,6 +1,5 @@
 // Reference motions other than the straight line of the tracking task, to see how a tracking policy copes when the
-// point accelerates and where it breaks (src/evaluate_reference.cpp). Training and the tests still move the point in a
-// straight line at constant velocity (simulate_task in dynamics.h); nothing here is used by them.
+// point accelerates and where it breaks (src/evaluate_reference.cpp).
 //
 // Each motion starts where and as the sampled start puts the point (position, direction of its velocity), so that the
 // starts are the ones of the tests and only the path changes. Its difficulty is one acceleration:
@@ -18,21 +17,6 @@
 #include "dynamics.h"
 
 namespace fixed_wing{
-    enum MotionKind{STRAIGHT = 0, CIRCLE, HELIX, FIGURE_EIGHT, SPEED_OSCILLATION};
-
-    template <typename T>
-    struct ReferenceMotion{
-        MotionKind kind = STRAIGHT;
-        T origin[3] = {0, 0, 0};  // the point at t = 0
-        T heading = 0;  // rad, direction of its horizontal velocity at t = 0
-        T speed = 0;  // m/s, horizontal: constant (straight, circle, helix), mean over the eight, at t = 0 (oscillation)
-        T climb = 0;  // m/s, constant
-        T turn = 1;  // +1 turns left (counterclockwise seen from above), -1 right; oscillation: +1 speeds up first
-        T acceleration = 0;  // m/s^2: centripetal (circle, helix), peak lateral (eight), peak along the path (oscillation)
-        T phase = 0;  // figure-eight: where on the figure the point starts (0: the crossing, at its highest speed)
-        T speed_mid = 15, speed_amplitude = 3;  // oscillation: m/s, the speed stays within mid +- amplitude
-    };
-
     // shape factors of the figure-eight for A = w = 1, by sampling one period: mean speed, peak lateral acceleration
     // (normal to the velocity, what banking provides), lowest and highest speed, peak acceleration along the path
     struct FigureEightFactors{ double mean_speed, peak_lateral, min_speed, max_speed, peak_tangential, peak_total; };
@@ -120,5 +104,20 @@ namespace fixed_wing{
             acceleration[0] = 0;
             acceleration[1] = 0;
         }
+    }
+
+    template <typename T>
+    void simulate_moving_task(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS],
+                              const T turbulence_normals[N_TURBULENCE], State<T>& next){
+        if(state.reference_motion.kind == STRAIGHT){
+            simulate_task(p, state, action, next);
+        }
+        else{
+            T position[3], velocity[3], acceleration[3];
+            reference_at(state.reference_motion, state.body.time + p.dt, position, velocity, acceleration);
+            simulate_task(p, state, action, position, velocity, next);
+            for(int i = 0; i < 3; i++) next.reference_acceleration[i] = acceleration[i];
+        }
+        advance_turbulence(p, state, turbulence_normals, next);
     }
 }

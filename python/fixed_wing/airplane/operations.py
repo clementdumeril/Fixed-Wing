@@ -64,7 +64,7 @@ def thermal_updraft(thermals: Thermals, position) -> float:
         w_s = max(1 / (1 + (k1 * abs(rr2 + k3)) ** k2) + k4 * rr2, 0.0)
     # Eqs. (17), (18): downdraft ring around the updraft, high in the mixing layer
     w_1 = np.pi / 6 * np.sin(np.pi * rr2) if r > r1 and rr2 < 2 else 0.0
-    s_wd = 2.5 * (zzi - 0.5) if 0.5 < zzi <= 0.9 else 0.0
+    s_wd = max(2.5 * (zzi - 0.5) if 0.5 < zzi <= 0.9 else 0.0, t.downdraft_ring)
     w_d = min(s_wd * w_1, 0.0)
     w = w_s * w_c + w_d * w_t
 

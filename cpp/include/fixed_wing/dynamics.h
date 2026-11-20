@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 #include "fixed_wing.h"
@@ -78,6 +79,229 @@ namespace fixed_wing{
     template <typename T>
     T clip(T x, T lo, T hi){ return x < lo ? lo : (x > hi ? hi : x); }
 
+    constexpr double ALLEN_R1_R2[7] = {0.14, 0.25, 0.36, 0.47, 0.58, 0.69, 0.80};
+    constexpr double ALLEN_SHAPES[7][4] = {
+        {1.5352, 2.5826, -0.0113, -0.1950},
+        {1.5265, 3.6054, -0.0176, -0.1265},
+        {1.4866, 4.8356, -0.0320, -0.0818},
+        {1.2042, 7.7904, 0.0848, -0.0445},
+        {0.8816, 13.9720, 0.3404, -0.0216},
+        {0.7067, 23.9940, 0.5689, -0.0099},
+        {0.6189, 42.7965, 0.7157, -0.0033},
+    };
+
+    template <typename T>
+    T allen_mean_radius(T height, T z_i){
+        T zzi = height / z_i;
+        return T(0.102) * std::pow(zzi, T(1) / T(3)) * (1 - T(0.25) * zzi) * z_i;
+    }
+
+    template <typename T>
+    T allen_mean_updraft(T height, T z_i, T w_star){
+        T zzi = height / z_i;
+        return std::pow(zzi, T(1) / T(3)) * (1 - T(1.1) * zzi) * w_star;
+    }
+
+    template <typename T>
+    T allen_core_factor(T r2){
+        T r1 = (r2 < 600 ? T(0.0011) * r2 + T(0.14) : T(0.8)) * r2;
+        return 3 * (std::pow(r2, T(3)) - std::pow(r2, T(2)) * r1) / (std::pow(r2, T(3)) - std::pow(r1, T(3)));
+    }
+
+    template <typename T>
+    T thermal_updraft(const Thermals<T>& t, T x, T y, T height){
+        if(t.count == 0 || height <= 0) return 0;
+        T zzi = height / t.z_i;
+        T r_bar = allen_mean_radius(height, t.z_i);
+        T w_bar = allen_mean_updraft(height, t.z_i, t.w_star);
+        int nearest = 0;
+        T r = 0;
+        for(int k = 0; k < t.count; k++){
+            T dx = x - t.centers[k][0], dy = y - t.centers[k][1];
+            T distance = std::sqrt(dx * dx + dy * dy);
+            if(k == 0 || distance < r){
+                r = distance;
+                nearest = k;
+            }
+        }
+        T r2 = std::fmax(r_bar * t.r_gain[nearest], T(10));
+        T r1_r2 = r2 < 600 ? T(0.0011) * r2 + T(0.14) : T(0.8);
+        T r1 = r1_r2 * r2;
+        T w_t = w_bar * t.w_gain[nearest];
+        T w_c = 3 * w_t * (std::pow(r2, T(3)) - std::pow(r2, T(2)) * r1) / (std::pow(r2, T(3)) - std::pow(r1, T(3)));
+        T rr2 = r / r2;
+        T w_s = 0;
+        if(height < t.z_i){
+            int row = 0;
+            for(int i = 0; i + 1 < 7; i++) if((ALLEN_R1_R2[i + 1] + ALLEN_R1_R2[i]) / 2 <= r1_r2) row = i + 1;
+            const double* k = ALLEN_SHAPES[row];
+            w_s = std::fmax(1 / (1 + std::pow(T(k[0]) * std::abs(rr2 + T(k[2])), T(k[1]))) + T(k[3]) * rr2, T(0));
+        }
+        T w_1 = r > r1 && rr2 < 2 ? T(PI) / 6 * std::sin(T(PI) * rr2) : T(0);
+        T s_wd = std::fmax(T(0.5) < zzi && zzi <= T(0.9) ? T(2.5) * (zzi - T(0.5)) : T(0), t.downdraft_ring);
+        T w_d = std::fmin(s_wd * w_1, T(0));
+        T w = w_s * w_c + w_d * w_t;
+        if(t.sink){
+            T updraft_area = t.count * T(PI) * (r_bar * r_bar);
+            if(updraft_area < t.area){
+                T w_e = std::fmin(-updraft_area * w_bar * (1 - s_wd) / (t.area - updraft_area), T(0));
+                if(r > r1 && w_c != 0) w = w * (1 - w_e / w_c) + w_e;
+            }
+        }
+        return w;
+    }
+
+    template <typename T>
+    void turbulence_velocity(const Parameters<T>& p, const Body<T>& x, T out[3]){
+        const T* n = x.turbulence;
+        T half_root_3 = std::sqrt(T(3)) / 2;
+        out[0] = p.turbulence_sigma[0] * n[0];
+        out[1] = p.turbulence_sigma[1] * (T(0.5) * n[1] + half_root_3 * n[2]);
+        out[2] = p.turbulence_sigma[2] * (T(0.5) * n[3] + half_root_3 * n[4]);
+    }
+
+    template <typename T>
+    void local_wind(const Parameters<T>& p, const Body<T>& x, const T R[3][3], T out[3]){
+        for(int i = 0; i < 3; i++) out[i] = p.wind[i];
+        if constexpr(FW_DISTURBANCES){
+            out[2] += thermal_updraft(p.thermals, x.position[0] - p.wind[0] * x.time, x.position[1] - p.wind[1] * x.time, x.position[2]);
+            for(int g = 0; g < p.gust_count; g++){
+                const Gust<T>& gust = p.gusts[g];
+                T s = (x.time - gust.start) / gust.duration;
+                if(s >= 0 && s < 1){
+                    for(int i = 0; i < 3; i++) out[i] += gust.peak[i] * T(0.5) * (1 - std::cos(2 * T(PI) * s));
+                }
+            }
+            T body[3], world[3];
+            turbulence_velocity(p, x, body);
+            rotate(R, body, world);
+            for(int i = 0; i < 3; i++) out[i] += world[i];
+        }
+    }
+
+    template <typename T>
+    void symmetric_eigen_2x2(T a, T b, T c, T& rt1, T& rt2, T& cs1, T& sn1){
+        T sm = a + c, df = a - c, adf = std::abs(df), tb = b + b, ab = std::abs(tb);
+        T acmx = std::abs(a) > std::abs(c) ? a : c;
+        T acmn = std::abs(a) > std::abs(c) ? c : a;
+        T rt;
+        if(adf > ab) rt = adf * std::sqrt(1 + (ab / adf) * (ab / adf));
+        else if(adf < ab) rt = ab * std::sqrt(1 + (adf / ab) * (adf / ab));
+        else rt = ab * std::sqrt(T(2));
+        int sgn1;
+        if(sm < 0){
+            rt1 = T(0.5) * (sm - rt);
+            sgn1 = -1;
+            rt2 = (acmx / rt1) * acmn - (b / rt1) * b;
+        }
+        else if(sm > 0){
+            rt1 = T(0.5) * (sm + rt);
+            sgn1 = 1;
+            rt2 = (acmx / rt1) * acmn - (b / rt1) * b;
+        }
+        else{
+            rt1 = T(0.5) * rt;
+            rt2 = T(-0.5) * rt;
+            sgn1 = 1;
+        }
+        int sgn2;
+        T cs;
+        if(df >= 0){
+            cs = df + rt;
+            sgn2 = 1;
+        }
+        else{
+            cs = df - rt;
+            sgn2 = -1;
+        }
+        if(std::abs(cs) > ab){
+            T ct = -tb / cs;
+            sn1 = 1 / std::sqrt(1 + ct * ct);
+            cs1 = ct * sn1;
+        }
+        else if(ab == 0){
+            cs1 = 1;
+            sn1 = 0;
+        }
+        else{
+            T tn = -cs / tb;
+            cs1 = 1 / std::sqrt(1 + tn * tn);
+            sn1 = tn * cs1;
+        }
+        if(sgn1 == sgn2){
+            T tn = cs1;
+            cs1 = -sn1;
+            sn1 = tn;
+        }
+    }
+
+    template <typename T>
+    void covariance_square_root(const T C[2][2], T G[2][2]){
+        T d[2] = {C[0][0], C[1][1]}, e = C[1][0];
+        T eps = std::numeric_limits<T>::epsilon() / 2;
+        T safe_min = std::numeric_limits<T>::min();
+        bool diagonal = e == 0 || std::abs(e) <= std::sqrt(std::abs(d[0])) * std::sqrt(std::abs(d[1])) * eps
+                     || e * e <= (eps * eps * std::abs(d[0])) * std::abs(d[1]) + safe_min;
+        T values[2], vectors[2][2];
+        if(diagonal){
+            values[0] = d[0];
+            values[1] = d[1];
+            vectors[0][0] = 1; vectors[0][1] = 0;
+            vectors[1][0] = 0; vectors[1][1] = 1;
+        }
+        else{
+            T cs, sn;
+            symmetric_eigen_2x2(d[0], e, d[1], values[0], values[1], cs, sn);
+            vectors[0][0] = cs; vectors[0][1] = -sn;
+            vectors[1][0] = sn; vectors[1][1] = cs;
+        }
+        if(values[1] < values[0]){
+            T v = values[0]; values[0] = values[1]; values[1] = v;
+            for(int i = 0; i < 2; i++){ T w = vectors[i][0]; vectors[i][0] = vectors[i][1]; vectors[i][1] = w; }
+        }
+        for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) G[i][j] = vectors[i][j] * std::sqrt(std::fmax(values[j], T(0)));
+    }
+
+    template <typename T>
+    void advance_turbulence_states(const T length_scale[3], const T in[N_TURBULENCE], T distance, const T normals[N_TURBULENCE], T out[N_TURBULENCE]){
+        T s[3], e[3];
+        for(int i = 0; i < 3; i++){
+            s[i] = distance / length_scale[i];
+            e[i] = std::exp(-s[i]);
+        }
+        out[0] = e[0] * in[0] + std::sqrt(1 - e[0] * e[0]) * normals[0];
+        for(int axis = 1; axis < 3; axis++){
+            T si = s[axis], ei = e[axis];
+            T M[2][2] = {{ei * (1 + si), ei * si}, {ei * -si, ei * (1 - si)}};
+            T C[2][2], G[2][2];
+            for(int a = 0; a < 2; a++) for(int b = 0; b < 2; b++) C[a][b] = (a == b ? T(1) : T(0)) - (M[a][0] * M[b][0] + M[a][1] * M[b][1]);
+            covariance_square_root(C, G);
+            const T* x = in + 2 * axis - 1;
+            const T* n = normals + 2 * axis - 1;
+            for(int a = 0; a < 2; a++) out[2 * axis - 1 + a] = (M[a][0] * x[0] + M[a][1] * x[1]) + (G[a][0] * n[0] + G[a][1] * n[1]);
+        }
+    }
+
+    template <typename T>
+    bool turbulent(const Parameters<T>& p){
+        return p.turbulence_sigma[0] != 0 || p.turbulence_sigma[1] != 0 || p.turbulence_sigma[2] != 0;
+    }
+
+    template <typename T>
+    void clear_disturbances(Parameters<T>& p){
+        for(int i = 0; i < 3; i++){
+            p.turbulence_sigma[i] = 0;
+            p.turbulence_length_scale[i] = 1;
+        }
+        p.gust_count = 0;
+        p.thermals.count = 0;
+        p.thermals.w_star = T(2.56);
+        p.thermals.z_i = T(1401);
+        p.thermals.area = T(1e6);
+        p.thermals.sink = true;
+        p.thermals.downdraft_ring = 0;
+    }
+
     // ----- airplane --------------------------------------------------------------------------------------------------
     template <typename T>
     void aerosonde(Parameters<T>& p){
@@ -117,6 +341,7 @@ namespace fixed_wing{
         p.latency_steps = 0;
         for(int i = 0; i < 3; i++) p.wind[i] = 0;
         for(int i = 0; i < 4 + N_COEFFICIENTS; i++) p.randomization[i] = 1;
+        clear_disturbances(p);
     }
 
     // PX4 advanced_plane (PX4-gazebo-models, models/advanced_plane/model.sdf), as Gazebo simulates it: the gz-sim
@@ -175,6 +400,7 @@ namespace fixed_wing{
         p.latency_steps = 0;
         for(int i = 0; i < 3; i++) p.wind[i] = 0;
         for(int i = 0; i < 4 + N_COEFFICIENTS; i++) p.randomization[i] = 1;
+        clear_disturbances(p);
     }
 
     // E-flite UMX Eratix 3D FF 450 mm (EFLU02050), the lab's airplane: a first model from its geometry and textbook
@@ -285,6 +511,7 @@ namespace fixed_wing{
         p.latency_steps = 0;
         for(int i = 0; i < 3; i++) p.wind[i] = 0;
         for(int i = 0; i < 4 + N_COEFFICIENTS; i++) p.randomization[i] = 1;
+        clear_disturbances(p);
     }
 
     template <typename T>
@@ -299,8 +526,9 @@ namespace fixed_wing{
     AirData<T> air_data(const Parameters<T>& p, const Body<T>& x){
         T R[3][3];
         rotation_matrix(x.orientation, R);
-        T air[3], body[3];
-        for(int i = 0; i < 3; i++) air[i] = x.linear_velocity[i] - p.wind[i];
+        T air[3], body[3], wind[3];
+        local_wind(p, x, R, wind);
+        for(int i = 0; i < 3; i++) air[i] = x.linear_velocity[i] - wind[i];
         rotate_inverse(R, air, body);
         AirData<T> a;
         a.v_frd[0] = body[0]; a.v_frd[1] = -body[1]; a.v_frd[2] = -body[2];
@@ -320,9 +548,17 @@ namespace fixed_wing{
         using namespace advanced;
         T R[3][3];
         rotation_matrix(x.orientation, R);
-        T air[3], body[3];
-        for(int i = 0; i < 3; i++) air[i] = x.linear_velocity[i] - p.wind[i];
+        T air[3], body[3], wind[3];
+        local_wind(p, x, R, wind);
+        for(int i = 0; i < 3; i++) air[i] = x.linear_velocity[i] - wind[i];
         rotate_inverse(R, air, body);
+        const T* k = p.randomization + 4;
+        const T CL0r = T(CL0) * k[C_L_0], CLar = T(CLa) * k[C_L_alpha], CD0r = T(CD0) * k[C_D_p], effr = T(eff) * k[oswald_efficiency];
+        const T Cem0r = T(Cem0) * k[C_m_0], Cemar = T(Cema) * k[C_m_alpha];
+        const T CYbr = T(CYb) * k[C_Y_beta], Cellbr = T(Cellb) * k[C_l_beta], Cenbr = T(Cenb) * k[C_n_beta];
+        const T CDpr = T(CDp) * k[C_D_p], CYpr = T(CYp) * k[C_Y_p], Cellpr = T(Cellp) * k[C_l_p], Cenpr = T(Cenp) * k[C_n_p];
+        const T CDqr = T(CDq) * k[C_D_p], CLqr = T(CLq) * k[C_L_q], Cemqr = T(Cemq) * k[C_m_q];
+        const T CYrr = T(CYr) * k[C_Y_r], Cellrr = T(Cellr) * k[C_l_r], Cenrr = T(Cenr) * k[C_n_r];
         const T* w = x.angular_velocity;  // FLU
         // air velocity at the center of pressure (-cp, 0, 0 in FLU), in FRD
         T u = body[0], v = -(body[1] + w[2] * T(cp)), wz = -(body[2] - w[1] * T(cp));
@@ -341,29 +577,33 @@ namespace fixed_wing{
             T angle[4] = {x.actuators[AILERON] * deg, -x.actuators[AILERON] * deg, x.actuators[ELEVATOR] * deg, x.actuators[RUDDER] * deg};
             T CL_c = 0, CD_c = 0, CY_c = 0, Cell_c = 0, Cem_c = 0, Cen_c = 0;
             for(int i = 0; i < 4; i++){
-                CL_c += angle[i] * T(CL_ctrl[i]); CD_c += angle[i] * T(CD_ctrl[i]); CY_c += angle[i] * T(CY_ctrl[i]);
-                Cell_c += angle[i] * T(Cell_ctrl[i]); Cem_c += angle[i] * T(Cem_ctrl[i]); Cen_c += angle[i] * T(Cen_ctrl[i]);
+                bool rudder = i == 3;
+                CL_c += angle[i] * T(CL_ctrl[i]) * k[C_L_delta_e]; CD_c += angle[i] * T(CD_ctrl[i]) * k[C_D_p];
+                CY_c += angle[i] * T(CY_ctrl[i]) * k[rudder ? C_Y_delta_r : C_Y_delta_a];
+                Cell_c += angle[i] * T(Cell_ctrl[i]) * k[rudder ? C_l_delta_r : C_l_delta_a];
+                Cem_c += angle[i] * T(Cem_ctrl[i]) * k[C_m_delta_e];
+                Cen_c += angle[i] * T(Cen_ctrl[i]) * k[rudder ? C_n_delta_r : C_n_delta_a];
             }
             T sign = alpha >= 0 ? T(1) : T(-1);
-            T CL = (1 - sigma) * (T(CL0) + T(CLa) * alpha) + sigma * (2 * sign * sa * sa * ca) + CL_c;
-            T lift = (CL * dyn + T(CLp) * (P * b / 2) * hrv + T(CLq) * (Q * c / 2) * hrv + T(CLr) * (Rr * b / 2) * hrv) * S;
+            T CL = (1 - sigma) * (CL0r + CLar * alpha) + sigma * (2 * sign * sa * sa * ca) + CL_c;
+            T lift = (CL * dyn + T(CLp) * (P * b / 2) * hrv + CLqr * (Q * c / 2) * hrv + T(CLr) * (Rr * b / 2) * hrv) * S;
             T CD_fp = 2 / (1 + std::exp(T(CD_fp_k1) + T(CD_fp_k2) * std::fmax(T(AR), 1 / T(AR))));
-            T CD = (1 - sigma) * (T(CD0) + CL * CL / (T(PI) * T(AR) * T(eff))) + sigma * std::abs(CD_fp * (T(0.5) - T(0.5) * std::cos(2 * alpha))) + CD_c;
-            T drag = (CD * dyn + T(CDp) * (P * b / 2) * hrv + T(CDq) * (Q * c / 2) * hrv + T(CDr) * (Rr * b / 2) * hrv) * S;
-            T CY = T(CYb) * beta + CY_c;
-            T side = (CY * dyn + T(CYp) * (P * b / 2) * hrv + T(CYq) * (Q * c / 2) * hrv + T(CYr) * (Rr * b / 2) * hrv) * S;
-            T Cem = alpha > T(alpha_stall) ? T(Cem0) + T(Cema) * T(alpha_stall) + T(Cema_stall) * (alpha - T(alpha_stall))
-                  : alpha < -T(alpha_stall) ? T(Cem0) - T(Cema) * T(alpha_stall) + T(Cema_stall) * (alpha + T(alpha_stall))
-                  : T(Cem0) + T(Cema) * alpha;
+            T CD = (1 - sigma) * (CD0r + CL * CL / (T(PI) * T(AR) * effr)) + sigma * std::abs(CD_fp * (T(0.5) - T(0.5) * std::cos(2 * alpha))) + CD_c;
+            T drag = (CD * dyn + CDpr * (P * b / 2) * hrv + CDqr * (Q * c / 2) * hrv + T(CDr) * (Rr * b / 2) * hrv) * S;
+            T CY = CYbr * beta + CY_c;
+            T side = (CY * dyn + CYpr * (P * b / 2) * hrv + T(CYq) * (Q * c / 2) * hrv + CYrr * (Rr * b / 2) * hrv) * S;
+            T Cem = alpha > T(alpha_stall) ? Cem0r + Cemar * T(alpha_stall) + T(Cema_stall) * (alpha - T(alpha_stall))
+                  : alpha < -T(alpha_stall) ? Cem0r - Cemar * T(alpha_stall) + T(Cema_stall) * (alpha + T(alpha_stall))
+                  : Cem0r + Cemar * alpha;
             Cem += Cem_c;
-            T Cell = T(Cellb) * beta + Cell_c, Cen = T(Cenb) * beta + Cen_c;
+            T Cell = Cellbr * beta + Cell_c, Cen = Cenbr * beta + Cen_c;
             // lift along -z of the stability axes, (sin alpha, 0, -cos alpha); drag along -(cos alpha, 0, sin alpha)
             f[0] = lift * sa - drag * ca;
             f[1] = side;
             f[2] = -lift * ca - drag * sa;
-            m[0] = (Cell * dyn + T(Cellp) * (P * b / 2) * hrv + T(Cellq) * (Q * c / 2) * hrv + T(Cellr) * (Rr * b / 2) * hrv) * S * b;
-            m[1] = (Cem * dyn + T(Cemp) * (P * b / 2) * hrv + T(Cemq) * (Q * c / 2) * hrv + T(Cemr) * (Rr * b / 2) * hrv) * S * c;
-            m[2] = (Cen * dyn + T(Cenp) * (P * b / 2) * hrv + T(Cenq) * (Q * c / 2) * hrv + T(Cenr) * (Rr * b / 2) * hrv) * S * b;
+            m[0] = (Cell * dyn + Cellpr * (P * b / 2) * hrv + T(Cellq) * (Q * c / 2) * hrv + Cellrr * (Rr * b / 2) * hrv) * S * b;
+            m[1] = (Cem * dyn + T(Cemp) * (P * b / 2) * hrv + Cemqr * (Q * c / 2) * hrv + T(Cemr) * (Rr * b / 2) * hrv) * S * c;
+            m[2] = (Cen * dyn + Cenpr * (P * b / 2) * hrv + T(Cenq) * (Q * c / 2) * hrv + Cenrr * (Rr * b / 2) * hrv) * S * b;
             // the force acts at the center of pressure (cp, 0, 0): cp x f
             m[1] += -T(cp) * f[2];
             m[2] += T(cp) * f[1];
@@ -518,6 +758,8 @@ namespace fixed_wing{
             if(i == THROTTLE && p.throttle_time_constant_down > 0 && command[i] < x.actuators[i]) tau = p.throttle_time_constant_down;
             dx.actuators[i] = (command[i] - x.actuators[i]) / tau;
         }
+        dx.time = 1;
+        for(int i = 0; i < N_TURBULENCE; i++) dx.turbulence[i] = 0;
     }
 
     template <typename T>
@@ -529,6 +771,8 @@ namespace fixed_wing{
         }
         for(int i = 0; i < 4; i++) out.orientation[i] = x.orientation[i] + scale * dx.orientation[i];
         for(int i = 0; i < N_ACTUATORS; i++) out.actuators[i] = x.actuators[i] + scale * dx.actuators[i];
+        out.time = x.time + scale * dx.time;
+        for(int i = 0; i < N_TURBULENCE; i++) out.turbulence[i] = x.turbulence[i] + scale * dx.turbulence[i];
     }
 
     template <typename T>
@@ -741,12 +985,61 @@ namespace fixed_wing{
         write(k++, a.alpha / T(0.3));
         write(k++, a.beta / T(0.3));
         write(k++, a.airspeed / 25);
-        for(int i = 0; i < 3; i++) write(k++, p.wind[i] / 10);
+        T R[3][3], wind[3];
+        rotation_matrix(s.body.orientation, R);
+        local_wind(p, s.body, R, wind);
+        for(int i = 0; i < 3; i++) write(k++, wind[i] / 10);
         T normalized[N_ACTUATORS];
         normalize_action(p, s.body.actuators, normalized);
         for(int i = 0; i < N_ACTUATORS; i++) write(k++, normalized[i]);
         for(int i = 0; i < 4 + N_COEFFICIENTS; i++) write(k++, (p.randomization[i] - 1) / T(0.3));
+        if constexpr(N_DISTURBANCE_PRIVILEGED > 0){
+            write(k++, T(p.latency_steps) / 2);
+            T acceleration_body[3];
+            rotate_inverse(R, s.reference_acceleration, acceleration_body);
+            for(int i = 0; i < 3; i++) write(k++, acceleration_body[i] / T(9.8));
+        }
         for(int i = 0; i < N_ACTUATORS; i++) write(k++, s.trim_action[i]);
+    }
+
+    constexpr int CRITIC_ACTUATORS_OFFSET = 6;
+
+    template <typename T>
+    T rotor_speed_fraction(T throttle){
+        return (T(advanced::rotor_speed_min) + (T(advanced::rotor_speed_max) - T(advanced::rotor_speed_min)) * throttle) / T(advanced::rotor_speed_max);
+    }
+
+    template <typename T>
+    T thrust_fraction(T throttle){
+        if constexpr(FW_AIRPLANE == 1){
+            T speed = rotor_speed_fraction(throttle);
+            return speed * speed;
+        }
+        else{
+            return throttle;
+        }
+    }
+
+    template <typename T>
+    T advanced_propeller_power(const Parameters<T>& p, const Body<T>& x){
+        T omega = T(advanced::rotor_speed_min) + (T(advanced::rotor_speed_max) - T(advanced::rotor_speed_min)) * x.actuators[THROTTLE];
+        T thrust = p.thrust_max * (omega / T(advanced::rotor_speed_max)) * (omega / T(advanced::rotor_speed_max));
+        return T(advanced::moment_constant) * thrust * omega;
+    }
+
+    template <typename T>
+    T simple_reward(T distance, const T action_change[N_ACTUATORS], T thrust_ratio, const RewardConfig<T>& c){
+        T change = 0;
+        for(int i = 0; i < N_ACTUATORS; i++) change += action_change[i] * action_change[i];
+        T energy = std::pow(std::fmax(thrust_ratio, T(0)), T(1.5));
+        return c.simple_constant - (distance + std::sqrt(change) + c.energy_weight * energy);
+    }
+
+    template <typename T>
+    void advance_turbulence(const Parameters<T>& p, const State<T>& state, const T normals[N_TURBULENCE], State<T>& next){
+        if(!turbulent(p)) return;
+        T distance = air_data(p, state.body).airspeed * p.dt;
+        advance_turbulence_states(p.turbulence_length_scale, state.body.turbulence, distance, normals, next.body.turbulence);
     }
 
     template <typename T>
@@ -841,6 +1134,11 @@ namespace fixed_wing{
         if constexpr(FW_TRACKING){
             T dx = s.body.position[0] - s.reference_position[0], dy = s.body.position[1] - s.reference_position[1];
             if(std::sqrt(dx * dx + dy * dy) > config.position_error_max) return POSITION;
+            if(config.reference_distance_max > 0){
+                T e_position[3], e_velocity[3];
+                tracking_errors(s, e_position, e_velocity);
+                if(norm3(e_position) > config.reference_distance_max) return POSITION;
+            }
         }
         return FLYING;
     }
@@ -848,6 +1146,13 @@ namespace fixed_wing{
     template <typename T>
     T reward(const Parameters<T>& p, const State<T>& state, const T action[N_ACTUATORS], const State<T>& next, const TaskConfig<T>& config){
         // on the state after the step; zero when the flight ends, as in FixedWingEnv.step
+        if(config.reward.simple_form){
+            if(termination(p, next, config) != FLYING) return -config.reward.simple_termination_penalty;
+            T e_position[3], e_velocity[3], change[N_ACTUATORS];
+            tracking_errors(next, e_position, e_velocity);
+            for(int i = 0; i < N_ACTUATORS; i++) change[i] = clip(action[i], T(-1), T(1)) - state.action_history[ACTION_HISTORY - 1][i];
+            return simple_reward(norm3(e_position), change, thrust_fraction(next.body.actuators[THROTTLE]), config.reward);
+        }
         if(termination(p, next, config) != FLYING) return config.reward.l2f_form ? -config.reward.l2f_termination_penalty : 0;
         AirData<T> air = air_data(p, next.body);
         T change = 0, deviation = 0;
@@ -883,9 +1188,17 @@ namespace fixed_wing{
     template <typename T>
     T reward_from_critic_observations(const T* observation, const T* next_observation, const T* action, bool terminated, const RewardConfig<T>& c){
         // the reward of a stored transition, with new weights (curriculum): same as reward_from_observations in Python
-        if(terminated) return c.l2f_form ? -c.l2f_termination_penalty : 0;
         const int n = ActorObservation<int>::DIM;
         const int critic = CriticObservation<int>::DIM;
+        if(c.simple_form){
+            if(terminated) return -c.simple_termination_penalty;
+            T position[3] = {next_observation[0] * 20, next_observation[1] * 20, next_observation[2] * 20};
+            T change[N_ACTUATORS];
+            for(int i = 0; i < N_ACTUATORS; i++) change[i] = action[i] - observation[n - N_ACTUATORS + i];
+            T throttle = (next_observation[n + CRITIC_ACTUATORS_OFFSET + THROTTLE] + 1) / 2;
+            return simple_reward(norm3(position), change, thrust_fraction(throttle), c);
+        }
+        if(terminated) return c.l2f_form ? -c.l2f_termination_penalty : 0;
         T alpha = next_observation[n] * T(0.3);
         T beta = next_observation[n + 1] * T(0.3);
         T change = 0, deviation = 0;
@@ -1000,6 +1313,8 @@ namespace fixed_wing{
             s.error_integral[i] = 0;
             s.reference_position[i] = 0;  // tracking task: set by sample_initial_state
             s.reference_velocity[i] = 0;
+            s.reference_acceleration[i] = 0;
         }
+        s.reference_motion = ReferenceMotion<T>{};
     }
 }

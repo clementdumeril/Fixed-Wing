@@ -31,6 +31,9 @@
 #ifndef FW_AIRPLANE
 #define FW_AIRPLANE 0
 #endif
+#ifndef FW_DISTURBANCES
+#define FW_DISTURBANCES 0
+#endif
 
 namespace fixed_wing{
     // order of the actions and of Body::actuators
@@ -41,6 +44,10 @@ namespace fixed_wing{
     constexpr int ACTION_HISTORY = 10;
     constexpr int N_INTEGRALS = FW_ERROR_INTEGRAL ? 3 : 0;
     constexpr int N_FINE = FW_FINE_POSITION ? 3 : 0;
+    constexpr int N_TURBULENCE = 5;
+    constexpr int MAX_GUSTS = 4;
+    constexpr int MAX_THERMALS = 128;
+    constexpr int N_DISTURBANCE_PRIVILEGED = FW_DISTURBANCES ? 4 : 0;
     // errors at the start of the observation: airspeed, altitude, sin and cos of course; or position and velocity
     constexpr int N_TASK_ERRORS = FW_TRACKING ? 6 : 4;
 
@@ -52,6 +59,41 @@ namespace fixed_wing{
         C_l_0, C_l_beta, C_l_p, C_l_r, C_l_delta_a, C_l_delta_r,
         C_m_0, C_m_alpha, C_m_q, C_m_delta_e,
         C_n_0, C_n_beta, C_n_p, C_n_r, C_n_delta_a, C_n_delta_r
+    };
+
+    template <typename T>
+    struct Thermals{
+        int count;
+        T centers[MAX_THERMALS][2];
+        T w_gain[MAX_THERMALS];
+        T r_gain[MAX_THERMALS];
+        T w_star;
+        T z_i;
+        T area;
+        bool sink;
+        T downdraft_ring;
+    };
+
+    template <typename T>
+    struct Gust{
+        T start;
+        T duration;
+        T peak[3];
+    };
+
+    enum MotionKind{STRAIGHT = 0, CIRCLE, HELIX, FIGURE_EIGHT, SPEED_OSCILLATION};
+
+    template <typename T>
+    struct ReferenceMotion{
+        MotionKind kind = STRAIGHT;
+        T origin[3] = {0, 0, 0};  // the point at t = 0
+        T heading = 0;  // rad, direction of its horizontal velocity at t = 0
+        T speed = 0;  // m/s, horizontal: constant (straight, circle, helix), mean over the eight, at t = 0 (oscillation)
+        T climb = 0;  // m/s, constant
+        T turn = 1;  // +1 turns left (counterclockwise seen from above), -1 right; oscillation: +1 speeds up first
+        T acceleration = 0;  // m/s^2: centripetal (circle, helix), peak lateral (eight), peak along the path (oscillation)
+        T phase = 0;  // figure-eight: where on the figure the point starts (0: the crossing, at its highest speed)
+        T speed_mid = 15, speed_amplitude = 3;  // oscillation: m/s, the speed stays within mid +- amplitude
     };
 
     template <typename T>
@@ -80,6 +122,11 @@ namespace fixed_wing{
         T fine_position_scale;  // m, tracking task with FW_FINE_POSITION (TaskConfig)
         // randomization factors, kept for the critic: mass, inertia, thrust, actuator time, then the 28 coefficients
         T randomization[4 + N_COEFFICIENTS];
+        T turbulence_sigma[3];
+        T turbulence_length_scale[3];
+        int gust_count;
+        Gust<T> gusts[MAX_GUSTS];
+        Thermals<T> thermals;
     };
 
     // what is integrated
@@ -90,6 +137,8 @@ namespace fixed_wing{
         T linear_velocity[3];  // world frame, ground-relative
         T angular_velocity[3];  // body frame
         T actuators[N_ACTUATORS];  // actual deflections [rad] and throttle [0, 1]
+        T time = 0;
+        T turbulence[N_TURBULENCE] = {};
     };
 
     template <typename T>
@@ -106,6 +155,8 @@ namespace fixed_wing{
         T action_history[ACTION_HISTORY][N_ACTUATORS];  // normalized, oldest first; the last row is the previous action
         T error_integral[3];  // time integrals of the airspeed, altitude and course errors, clipped (simulate_task);
                               // tracking: of the position error, world frame [m s]
+        ReferenceMotion<T> reference_motion;
+        T reference_acceleration[3];
     };
 
     template <typename T>
@@ -198,6 +249,10 @@ namespace fixed_wing{
         // be within about 10 m first, then within about 1 m, whatever the motion of the point
         T position_bonus_weight = 0;
         T position_bonus_scale = 10;  // m, set by the curriculum
+        bool simple_form = false;
+        T simple_constant = T(0.5);
+        T simple_termination_penalty = 100;
+        T energy_weight = 0;
     };
 
     // how an episode starts (sample_initial_state)
@@ -310,6 +365,23 @@ namespace fixed_wing{
         T reference_altitude_range[2] = {40, 140};  // m, over the 30 s of an episode
         T position_error_max = 300;  // m: farther from the reference, the flight ends
 #endif
+        T episode_duration = 0;
+        T reference_distance_max = 0;
+        T reference_turn_fraction = 0;
+        T reference_turn_bank_range[2] = {T(0.08726646259971647), T(0.5235987755982988)};
+        int latency_steps_random_max = -1;
+        T randomization_mass = 0;
+        T randomization_thrust = 0;
+        T randomization_aerodynamics = 0;
+        T turbulence_intensity_max = 0;
+        T gust_rate = 0;
+        T gust_speed_max = 3;
+        T gust_duration_range[2] = {1, 3};
+        T thermal_fraction = 0;
+        T thermal_core_range[2] = {T(0.5), 3};
+        T thermal_radius_range[2] = {30, 80};
+        T thermal_downdraft_ring = 1;
+        T thermal_field_margin = 300;
         RewardConfig<T> reward;
     };
 
@@ -320,7 +392,7 @@ namespace fixed_wing{
     };
     template <typename TI>
     struct CriticObservation{
-        static constexpr TI DIM = ActorObservation<TI>::DIM + 3 + 3 + N_ACTUATORS + 4 + N_COEFFICIENTS + N_ACTUATORS;
+        static constexpr TI DIM = ActorObservation<TI>::DIM + 3 + 3 + N_ACTUATORS + 4 + N_COEFFICIENTS + N_DISTURBANCE_PRIVILEGED + N_ACTUATORS;
     };
 
     template <typename T_T, typename T_TI>

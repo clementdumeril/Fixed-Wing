@@ -97,6 +97,7 @@ class Thermals:
     r_gain: np.ndarray = field(default_factory=lambda: np.ones(0))  # (N,), radius of each updraft / average
     area: float = 1e6  # m², region holding the updrafts, for the environment sink
     sink: bool = True  # sinking air outside the updrafts, which balances the rising air (mass conservation)
+    downdraft_ring: float = 0.0
 
 
 @dataclass

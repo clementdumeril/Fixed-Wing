@@ -117,6 +117,7 @@ sbatch slurm/tracking_px4plane_l2freward.slurm # the reward form of L2F: SAC cri
 sbatch slurm/tracking_px4plane_precision.slurm # the L2F reward with a linear distance cost and a stronger velocity correction, 10 seeds each
 sbatch slurm/tracking_px4plane_precision2.slurm # a closeness bonus with a shrinking scale, a stronger velocity correction, the position-error integral, 10 seeds each
 sbatch slurm/tracking_px4plane_precision3.slurm # the closeness bonus with a fixed (10 m, 5 m) or adaptive scale, 10 seeds each
+sbatch slurm/tracking_px4plane_simple.slurm   # the simple reward in wind and thermals, energy weights 0, 0.1, 0.3, 8M steps, 4 seeds each
 ```
 
 Each run writes `runs/<variant>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
@@ -174,3 +175,40 @@ are randomized, and a motor-propeller model whose thrust falls with the airspeed
 20 m away, 15-60 m of altitude; the table is in the document). Targets: `train_sac_c128_b256_tracking_g995_eratix_i10a20`
 (the current best recipe of the advanced_plane) and `eratix_trim` (trim table, stall speed, linear modes, hands-off
 flight: `eratix_trim [out_dir]`).
+
+## Simple reward in wind and thermals
+
+`train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind` (`FW_DISTURBANCES=1`) is the best advanced_plane recipe
+in a disturbed world, with `--reward simple`, the reward of RLtools' L2F environment in meters, without rescaling:
+
+$$r = 0.5 - \left( \lVert p - p_{\text{ref}} \rVert + \lVert a_t - a_{t-1} \rVert + w_E \left( T / T_{\max} \right)^{3/2} \right)$$
+
+and $r = -100$ on the step that ends a flight; $a$ are the four normalized commands, $T / T_{\max}$ the thrust of the
+rotor model over its maximum ($(\omega / \omega_{\max})^2$, from the rotor speed state). `--energy-weight W` ramps
+$w_E$ linearly from 0 to W between the steps of `--energy-ramp START END` (default 1M and 3M), with the stored rewards
+recomputed from the critic observations at every curriculum check (`--curriculum-period`); `--simple-constant C`
+replaces the 0.5. `--distance-max D` ends a flight when the point is more than D m away (3D); `--near-start 1 5` starts
+it within 5 m horizontally and vertically; `--reference-heading-max DEG` sets the spread of its heading around the
+airplane's course (default 90°).
+
+Every episode draws (`include/fixed_wing/operations_generic.h`): a constant horizontal wind of 0-6 m/s in any
+direction (`--wind-max`); Dryden turbulence from none to the low-altitude moderate preset (`--turbulence-max`, a
+fraction of it); "1 - cos" gusts of up to 3 m/s in any direction lasting 1-3 s, one per minute on average
+(`--gust-rate`); in half the episodes (`--thermal-fraction`) an Allen thermal field, as many updrafts as Allen's
+Eq. (20) gives for the field, each with a core of 0.5-3 m/s and a radius of 30-80 m at 90 m of altitude, a sinking
+ring around it (the downdraft ring of Allen's Eqs. (17)-(18) at full strength, which his model keeps above half the
+mixing layer only), the centres drifting with the constant wind; the field covers the flight relative to the air,
+with one updraft where the airplane is at mid-flight. The point flies straight in half the episodes and turns at a
+constant rate (equivalent bank 5-30°) in the other half (`--turn-fraction`, `reference_motion.h`). The airplane's mass
+is randomized by ±10 %, its maximum thrust by ±15 %, each advanced_plane coefficient by ±10 % (`advanced_aerodynamics`,
+through the 28 factors of `Parameters::randomization`), and the command latency is 0-2 steps. `--calm` removes the
+air disturbances. The actor observes what it observed before; the critic also sees the local wind (constant, gust,
+thermal and turbulence together), the randomization factors, the latency and the acceleration of the point.
+
+The tests fly 100 flights of `--eval-duration` seconds (default 120) from fixed starts, airplanes and air:
+`evaluation_disturbed.json` (success rate, position RMSE, energy per completed flight from the shaft power of the
+rotor model, $Q \omega$ with $Q = 0.01 T$, and mean power), split with and without thermals, and
+`evaluation_calm.json` (the same task in calm air); the best checkpoint is chosen on 100 disturbed validation flights
+of 30 s. `tools/compare_wind_with_python.py build/check_wind` checks the C++ wind against the Python model
+(`python/fixed_wing/airplane/operations.py`) value by value: 1440 local winds and Allen updrafts within 2e-15 m/s,
+2700 Dryden filter states within 1.6e-14 with the same normal draws.

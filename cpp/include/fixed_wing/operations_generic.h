@@ -1,10 +1,78 @@
 // RLtools MDP interface of the fixed-wing task (same functions as the pendulum of rl-tools/example and as L2F).
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+
 #include <rl_tools/rl/environments/operations_generic.h>
 
 #include "fixed_wing.h"
 #include "dynamics.h"
+#include "reference_motion.h"
+
+namespace fixed_wing{
+    template <typename T>
+    T episode_duration(const TaskConfig<T>& c, T dt, T step_limit){
+        return c.episode_duration > 0 ? c.episode_duration : step_limit * dt;
+    }
+
+    template <typename T, typename UNIFORM>
+    void sample_disturbances(const TaskConfig<T>& c, T duration, Parameters<T>& p, UNIFORM uniform){
+        const T moderate_sigma[3] = {T(2.12), T(2.12), T(1.4)};
+        const T moderate_length_scale[3] = {200, 200, 50};
+        if(c.turbulence_intensity_max > 0){
+            T intensity = uniform(T(0), c.turbulence_intensity_max);
+            for(int i = 0; i < 3; i++){
+                p.turbulence_sigma[i] = intensity * moderate_sigma[i];
+                p.turbulence_length_scale[i] = moderate_length_scale[i];
+            }
+        }
+        if(c.gust_rate > 0){
+            T probability = std::fmin(c.gust_rate * duration / 60 / MAX_GUSTS, T(1));
+            p.gust_count = 0;
+            for(int g = 0; g < MAX_GUSTS; g++){
+                bool active = uniform(T(0), T(1)) < probability;
+                T gust_duration = uniform(c.gust_duration_range[0], c.gust_duration_range[1]);
+                T latest_start = std::fmax(duration - gust_duration, T(1));
+                T start = uniform(T(1), latest_start);
+                T vertical = uniform(T(-1), T(1));
+                T azimuth = uniform(T(-PI), T(PI));
+                T speed = uniform(T(0), c.gust_speed_max);
+                if(!active) continue;
+                T horizontal = std::sqrt(1 - vertical * vertical);
+                Gust<T>& gust = p.gusts[p.gust_count++];
+                gust.start = start;
+                gust.duration = gust_duration;
+                gust.peak[0] = speed * horizontal * std::cos(azimuth);
+                gust.peak[1] = speed * horizontal * std::sin(azimuth);
+                gust.peak[2] = speed * vertical;
+            }
+        }
+        if(c.thermal_fraction > 0 && uniform(T(0), T(1)) < c.thermal_fraction){
+            Thermals<T>& t = p.thermals;
+            t.downdraft_ring = c.thermal_downdraft_ring;
+            T wind_speed = std::sqrt(p.wind[0] * p.wind[0] + p.wind[1] * p.wind[1]);
+            T half_size = (c.reference_speed_range[1] + wind_speed) * duration / 2 + c.thermal_field_margin;
+            T size = 2 * half_size;
+            t.area = size * size;
+            T height = (c.reference_altitude_range[0] + c.reference_altitude_range[1]) / 2;
+            T mean_radius = std::fmax(allen_mean_radius(height, t.z_i), T(10));
+            T mean_updraft = allen_mean_updraft(height, t.z_i, t.w_star);
+            int count = int(std::lround(T(0.6) * size * size / (t.z_i * mean_radius)));
+            t.count = std::min(std::max(count, 1), MAX_THERMALS);
+            for(int k = 0; k < t.count; k++){
+                T spread = k == 0 ? T(0) : half_size;
+                T core = uniform(c.thermal_core_range[0], c.thermal_core_range[1]);
+                T radius = uniform(c.thermal_radius_range[0], c.thermal_radius_range[1]);
+                T offset = k == 0 ? radius : T(0);
+                t.centers[k][0] = uniform(-spread - offset, spread + offset);
+                t.centers[k][1] = uniform(-spread - offset, spread + offset);
+                t.r_gain[k] = radius / allen_mean_radius(height, t.z_i);
+                t.w_gain[k] = core / (mean_updraft * allen_core_factor(radius));
+            }
+        }
+    }
+}
 
 namespace rl_tools{
     template <typename DEVICE, typename SPEC>
@@ -25,17 +93,31 @@ namespace rl_tools{
     template <typename DEVICE, typename SPEC, typename RNG>
     void sample_initial_parameters(DEVICE& device, const fixed_wing::Environment<SPEC>& env, typename fixed_wing::Environment<SPEC>::Parameters& p, RNG& rng){
         using T = typename SPEC::T;
-        fixed_wing::task_parameters(env.config, p);
-        T r = env.config.randomization;
+        const auto& c = env.config;
+        auto uniform = [&](T lo, T hi){ return random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), lo, hi, rng); };
+        fixed_wing::task_parameters(c, p);
+        T r = c.randomization;
         for(int i = 0; i < 4 + fixed_wing::N_COEFFICIENTS; i++){
-            p.randomization[i] = r > 0 ? random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), 1 - r, 1 + r, rng) : T(1);
+            p.randomization[i] = r > 0 ? uniform(1 - r, 1 + r) : T(1);
+        }
+        auto factor = [&](T range){ return range > 0 ? uniform(1 - range, 1 + range) : T(1); };
+        if(c.randomization_mass > 0) p.randomization[0] = factor(c.randomization_mass);
+        if(c.randomization_thrust > 0) p.randomization[2] = factor(c.randomization_thrust);
+        if(c.randomization_aerodynamics > 0){
+            for(int i = 0; i < fixed_wing::N_COEFFICIENTS; i++) p.randomization[4 + i] = factor(c.randomization_aerodynamics);
         }
         fixed_wing::apply_randomization(p);
-        T direction = random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), T(-fixed_wing::PI), T(fixed_wing::PI), rng);
-        T speed = env.config.wind_speed_max > 0 ? random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), T(0), env.config.wind_speed_max, rng) : T(0);
+        T direction = uniform(T(-fixed_wing::PI), T(fixed_wing::PI));
+        T speed = c.wind_speed_max > 0 ? uniform(T(0), c.wind_speed_max) : T(0);
         p.wind[0] = speed * std::cos(direction);
         p.wind[1] = speed * std::sin(direction);
         p.wind[2] = 0;
+        if(c.latency_steps_random_max >= 0){
+            int steps = int(uniform(T(0), T(c.latency_steps_random_max + 1)));
+            p.latency_steps = std::min(steps, std::min(c.latency_steps_random_max, fixed_wing::MAX_LATENCY));
+        }
+        T duration = fixed_wing::episode_duration(c, p.dt, T(fixed_wing::Environment<SPEC>::EPISODE_STEP_LIMIT));
+        fixed_wing::sample_disturbances(c, duration, p, uniform);
     }
 
     template <typename DEVICE, typename SPEC>
@@ -110,7 +192,7 @@ namespace rl_tools{
             T altitude_offset_max = near_start ? std::fmin(c.reference_near_offset_max, c.reference_altitude_offset_max) : c.reference_altitude_offset_max;
             T altitude = fixed_wing::clip(body.position[2] + uniform(-altitude_offset_max, altitude_offset_max),
                                           c.reference_altitude_range[0], c.reference_altitude_range[1]);
-            T duration = fixed_wing::Environment<SPEC>::EPISODE_STEP_LIMIT * p.dt;
+            T duration = fixed_wing::episode_duration(c, p.dt, T(fixed_wing::Environment<SPEC>::EPISODE_STEP_LIMIT));
             T climb = fixed_wing::clip(uniform(-c.reference_climb_max, c.reference_climb_max),
                                        (c.reference_altitude_range[0] - altitude) / duration, (c.reference_altitude_range[1] - altitude) / duration);
             fixed_wing::start_state(p, body, std::sqrt(speed * speed + climb * climb), altitude, heading, s);
@@ -120,6 +202,33 @@ namespace rl_tools{
             s.reference_velocity[0] = speed * std::cos(heading);
             s.reference_velocity[1] = speed * std::sin(heading);
             s.reference_velocity[2] = climb;
+            fixed_wing::ReferenceMotion<T>& motion = s.reference_motion;
+            for(int i = 0; i < 3; i++) motion.origin[i] = s.reference_position[i];
+            motion.heading = heading;
+            motion.speed = speed;
+            motion.climb = climb;
+            if(c.reference_turn_fraction > 0 && uniform(T(0), T(1)) < c.reference_turn_fraction){
+                T bank = uniform(c.reference_turn_bank_range[0], c.reference_turn_bank_range[1]);
+                motion.kind = fixed_wing::HELIX;
+                motion.turn = uniform(T(-1), T(1)) < 0 ? T(-1) : T(1);
+                motion.acceleration = std::abs(p.gravity[2]) * std::tan(bank);
+                T position[3], velocity[3], acceleration[3];
+                fixed_wing::reference_at(motion, T(0), position, velocity, acceleration);
+                for(int i = 0; i < 3; i++){
+                    s.reference_velocity[i] = velocity[i];
+                    s.reference_acceleration[i] = acceleration[i];
+                }
+            }
+            if(p.thermals.count > 0){
+                T position[3], velocity[3], acceleration[3];
+                fixed_wing::reference_at(motion, duration / 2, position, velocity, acceleration);
+                T shift[2] = {position[0] - p.wind[0] * duration / 2, position[1] - p.wind[1] * duration / 2};
+                for(int i = 0; i < 2; i++){
+                    s.body.position[i] -= shift[i];
+                    s.reference_position[i] -= shift[i];
+                    motion.origin[i] -= shift[i];
+                }
+            }
         }
         else{
             T setpoint_airspeed = uniform(c.airspeed_range[0], c.airspeed_range[1]);
@@ -127,15 +236,26 @@ namespace rl_tools{
             T setpoint_course = fixed_wing::wrap(course + uniform(-c.course_change_max, c.course_change_max));
             fixed_wing::start_state(p, body, setpoint_airspeed, setpoint_altitude, setpoint_course, s);
         }
+        if(fixed_wing::turbulent(p)){
+            for(int i = 0; i < fixed_wing::N_TURBULENCE; i++){
+                s.body.turbulence[i] = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM(), T(0), T(1), rng);
+            }
+        }
     }
 
     template <typename DEVICE, typename SPEC, typename ACTION_SPEC, typename RNG>
-    typename SPEC::T step(DEVICE&, const fixed_wing::Environment<SPEC>&, const typename fixed_wing::Environment<SPEC>::Parameters& p, const typename fixed_wing::Environment<SPEC>::State& s, const Matrix<ACTION_SPEC>& action, typename fixed_wing::Environment<SPEC>::State& next, RNG&){
+    typename SPEC::T step(DEVICE&, const fixed_wing::Environment<SPEC>&, const typename fixed_wing::Environment<SPEC>::Parameters& p, const typename fixed_wing::Environment<SPEC>::State& s, const Matrix<ACTION_SPEC>& action, typename fixed_wing::Environment<SPEC>::State& next, RNG& rng){
         static_assert(ACTION_SPEC::ROWS == 1 && ACTION_SPEC::COLS == fixed_wing::N_ACTUATORS);
         using T = typename SPEC::T;
         T a[fixed_wing::N_ACTUATORS];
         for(int i = 0; i < fixed_wing::N_ACTUATORS; i++) a[i] = get(action, 0, i);
-        fixed_wing::simulate_task(p, s, a, next);
+        T normals[fixed_wing::N_TURBULENCE] = {};
+        if(fixed_wing::turbulent(p)){
+            for(int i = 0; i < fixed_wing::N_TURBULENCE; i++){
+                normals[i] = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM(), T(0), T(1), rng);
+            }
+        }
+        fixed_wing::simulate_moving_task(p, s, a, normals, next);
         return p.dt;
     }
 
