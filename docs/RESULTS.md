@@ -65,14 +65,26 @@ the angle-of-attack limit. Source: [`cpp/results/reference_suite_fine`](../cpp/r
 (`compare.png`, `fine2m_bonus4/summary.csv`; the first L2F reward: [`reference_suite`](../cpp/results/reference_suite/README.md)).
 
 Other C++ runs, each with its table and discussion: network and batch sweep
-([`sweep`](../cpp/results/sweep/README.md)), batch 256 ([`batch_px4plane`](../cpp/results/batch_px4plane/README.md)),
-3 M steps with the best checkpoint ([`long_px4plane`](../cpp/results/long_px4plane/README.md)), L2F update intervals
-([`l2f_intervals_px4plane`](../cpp/results/l2f_intervals_px4plane/README.md)), L2F critic size and TD3
-([`l2f_td3_px4plane`](../cpp/results/l2f_td3_px4plane/README.md)), smoothing TD3's commands
-([`td3_smooth_px4plane`](../cpp/results/td3_smooth_px4plane/README.md)), the L2F reward form
+([`sweep`](../cpp/results/sweep/README.md)), 3 M steps with the best checkpoint
+([`long_px4plane`](../cpp/results/long_px4plane/README.md)), the L2F reward form
 ([`l2f_reward_px4plane`](../cpp/results/l2f_reward_px4plane/README.md)), points that accelerate (circles,
 figure-eights, speed changes: [`reference_suite`](../cpp/results/reference_suite/README.md)), and the first trainings
-with the check against Python ([`cpp/results`](../cpp/results/README.md)).
+with the check against Python ([`cpp/results`](../cpp/results/README.md)). The code keeps only the recipes that
+worked; every variant tried along the way (batch 256, the L2F update intervals, TD3 and its smoothing, near starts,
+the error integral, other reward forms) is in tag `experiments-2026-11`, with its targets, options, Slurm files and
+results.
+
+## Simple reward in wind and thermals (C++)
+
+The tracking task on the advanced_plane in a disturbed world: constant wind up to 6 m/s, Dryden turbulence up to the
+moderate preset, gusts, drifting Allen thermals in half the flights, a point that turns in half the flights, and
+randomized mass (±10 %), thrust (±15 %), aerodynamic coefficients (±10 %) and command latency (0-2 steps). Reward: the
+one of RLtools' L2F environment in meters, constant 35 minus the distance, the command change and an energy term
+(`--reward simple`, [cpp/README.md](../cpp/README.md#simple-reward-in-wind-and-thermals)). With the constant at 0.5
+every step more than 0.5 m from the point costs, so ending the flight (-100 once) pays better than flying on, and the
+policy learns to crash; with 35 a step pays up to 35 m from the point and the policy flies. Savio job 41645214 (energy
+weights 0, 0.1 and 0.3, 4 seeds each, 8M steps): 84-90 % of the 120 s disturbed test flights completed, 99-100 % in
+calm air. The run files are not committed.
 
 ## The lab's E-flite UMX Eratix
 
@@ -132,11 +144,13 @@ are stalls in the first 5 s, from banking 50 to 80° where the PID limits its ba
 ## Limitations in detail
 
 - Placeholder airframes (Aerosonde, PX4 `advanced_plane`), linear aerodynamics without stall: the angle-of-attack
-  limit ends the episode instead (the Eratix model blends into a flat-plate model past a 12° stall). No parameter
-  randomization in the reported runs, so the research question is not answered yet.
+  limit ends the episode instead (the Eratix model blends into a flat-plate model past a 12° stall). Only the
+  simple-reward runs randomize the airplane (±10-15 %), so the research question is not answered yet.
 - First task: three seeds per condition; success varies by up to 14 flights between seeds, so small differences are
   not significant.
-- The C++ port is trained in calm air only: wind, turbulence and sensor noise are not ported.
+- The precision recipe and the Eratix runs are trained and tested in calm air. The simple-reward task has wind,
+  Dryden turbulence, gusts, thermals and randomization in C++ (84-90 % of the disturbed flights completed); sensor
+  noise is not ported.
 - No real flight.
 
 ## Run times and code map

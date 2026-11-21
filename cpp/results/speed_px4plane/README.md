@@ -1,5 +1,8 @@
 # Training time against precision (PX4 advanced_plane, tracking)
 
+The Slurm files, targets, options and folders named here that are no longer in the code are in tag
+`experiments-2026-11`.
+
 Job 41205677, `slurm/tracking_px4plane_speed.slurm`. The best recipe of [`fine_px4plane`](../fine_px4plane/README.md)
 (third run, `fine2m_bonus4`: fine position observation, adaptive closeness bonus of weight 4, precise checkpoint
 choice; 1.8 m, 16 min per run with critic 128 and updates every 10 steps) with one change per variant, 10 seeds each.

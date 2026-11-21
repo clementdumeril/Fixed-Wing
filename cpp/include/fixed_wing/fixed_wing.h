@@ -2,19 +2,15 @@
 //
 // World frame: z up. Body frame: x forward, y left, z up (same as L2F). The aerodynamic coefficients keep the
 // aerospace convention (x forward, y right, z down); the conversion happens in aerodynamics() only.
-// The dynamics are computed from the air-relative velocity: the wind is a world-frame vector field (zero for now).
+// The dynamics are computed from the air-relative velocity: the wind is a world-frame vector field (constant wind, and
+// with FW_DISTURBANCES gusts, thermals and Dryden turbulence).
 #pragma once
 
 #include <rl_tools/rl/environments/environments.h>
 
-// 1: the time integrals of the airspeed, altitude and course errors are part of the observation (train_sac_*_integral);
-// tracking task: the time integral of the position error, with forgetting (train_sac_*_tracking_*_integral)
-#ifndef FW_ERROR_INTEGRAL
-#define FW_ERROR_INTEGRAL 0
-#endif
 // 1: tracking task, the position error also observed on a fine scale, tanh(error / fine_position_scale) in the body
 // frame (3 more values), so that a few meters of error change the commands as much as tens of meters do on the main
-// scale of 20 m (train_sac_*_fine; results/near_px4plane: the error left is a steady offset of 3-4 m)
+// scale of 20 m (train_sac_*_fine; results/fine_px4plane)
 #ifndef FW_FINE_POSITION
 #define FW_FINE_POSITION 0
 #endif
@@ -42,7 +38,6 @@ namespace fixed_wing{
     constexpr int N_COEFFICIENTS = 28;
     constexpr int MAX_LATENCY = 4;
     constexpr int ACTION_HISTORY = 10;
-    constexpr int N_INTEGRALS = FW_ERROR_INTEGRAL ? 3 : 0;
     constexpr int N_FINE = FW_FINE_POSITION ? 3 : 0;
     constexpr int N_TURBULENCE = 5;
     constexpr int MAX_GUSTS = 4;
@@ -116,9 +111,6 @@ namespace fixed_wing{
         int n_substeps;  // RK4 steps per control period, the command is held over all of them
         int latency_steps;  // control periods between a command and its application
         T wind[3];  // world frame, constant over an episode
-        T error_integral_limits[3];  // m, m s, rad s (TaskConfig)
-        T position_integral_time;  // s, tracking task (TaskConfig)
-        T position_integral_scale;  // m s
         T fine_position_scale;  // m, tracking task with FW_FINE_POSITION (TaskConfig)
         // randomization factors, kept for the critic: mass, inertia, thrust, actuator time, then the 28 coefficients
         T randomization[4 + N_COEFFICIENTS];
@@ -153,8 +145,6 @@ namespace fixed_wing{
         T reference_velocity[3];  // world frame, constant over an episode
         T trim_action[N_ACTUATORS];  // normalized commands of steady level flight at the setpoint airspeed
         T action_history[ACTION_HISTORY][N_ACTUATORS];  // normalized, oldest first; the last row is the previous action
-        T error_integral[3];  // time integrals of the airspeed, altitude and course errors, clipped (simulate_task);
-                              // tracking: of the position error, world frame [m s]
         ReferenceMotion<T> reference_motion;
         T reference_acceleration[3];
     };
@@ -193,9 +183,6 @@ namespace fixed_wing{
         T alpha_soft_max = T(0.19198621771937624);  // 11 deg
 #endif
         T alpha_margin_scale = T(0.06981317007977318);  // 4 deg: costs the weight at the limit
-        // 0: squared airspeed, altitude and course errors. > 0: Huber (smooth L1) on the scaled errors, quadratic below
-        // huber_delta and linear above, so that small errors still cost (the square is flat near 0)
-        T huber_delta = 0;
         // tracking task: errors of position and ground velocity to the reference, replacing airspeed, altitude, course
         // 50 m: the cost keeps growing up to about 80 m. With 20 m it saturated (tanh) beyond about 26 m, and the
         // policy learned to fly at the reference velocity about 55 m away instead of reaching the point
@@ -225,32 +212,23 @@ namespace fixed_wing{
         T far_position_scale = 100;  // m
         T far_velocity_scale = 15;  // m/s
 #endif
-        // the reward form of Learning to Fly in Seconds (--reward l2f) instead of the capped tanh above: survival
-        // minus a sum of weighted squared scaled errors (position, velocity toward the point, sideslip, command change,
-        // stall margin), not capped, clipped below at l2f_floor. The L2F errors stay below 0.6 m (its termination box),
-        // ours reach 300 m, so a floor is needed: either 0 (crashing never pays, but far from the point the reward is
-        // flat), or below 0 with a termination penalty at least as bad as staying at the floor forever
+        // the reward form of Learning to Fly in Seconds with the norms of the errors, as the L2F reward of RLtools at
+        // b32d9985 (--reward l2f-norm), instead of the capped tanh above: survival minus a sum of weighted norms of the
+        // scaled errors (position, velocity toward the point, sideslip, command change, stall margin), not capped,
+        // clipped below at l2f_floor. A meter closer pays the same near the point as far from it. The L2F errors stay
+        // below 0.6 m (its termination box), ours reach 300 m, so the floor is below 0 with a termination penalty at
+        // least as bad as staying at the floor forever
         bool l2f_form = false;
         T l2f_survival = 2;  // as L2F
         T l2f_floor = 0;
-        T l2f_termination_penalty = 0;  // reward of the step that ends a flight (L2F: none, the flight just ends)
-        // L2F form only: the terms are the norms of the scaled errors instead of their squares, as the current RLtools
-        // L2F reward (--reward l2f-norm). A meter closer pays the same near the point as far from it
-        bool l2f_norms = false;
-        // L2F form only: a cost linear in the distance, weight x (sqrt(d^2 + delta^2) - delta), with a slope of
-        // about the weight per meter everywhere beyond delta. The squared position cost is flat near the point (2 m
-        // cost 1 % of the best reward, 6 m 11 %) and the policies settled about 10 m away; this term pays for every
-        // meter closer, down to about delta
-        T position_l1_weight = 0;  // per meter
-        T position_l1_delta = 1;  // m
+        T l2f_termination_penalty = 0;  // reward of the step that ends a flight
         // L2F form only: a bonus for being close to the point, weight x exp(-(d / scale)^2), added before the floor.
-        // It pays only near the point, so it changes nothing far from it, and the curriculum shrinks its scale
-        // (Curriculum::l2f: from position_bonus_scale0 down to position_bonus_scale_min) so that the policy is asked to
-        // be within about 10 m first, then within about 1 m, whatever the motion of the point
+        // It pays only near the point, so it changes nothing far from it; the curriculum shrinks its scale with the
+        // mean training distance to the point (Curriculum::bonus_adaptive)
         T position_bonus_weight = 0;
         T position_bonus_scale = 10;  // m, set by the curriculum
         bool simple_form = false;
-        T simple_constant = T(0.5);
+        T simple_constant = 35;
         T simple_termination_penalty = 100;
         T energy_weight = 0;
     };
@@ -307,7 +285,6 @@ namespace fixed_wing{
         T altitude_error_max = 50;  // m
         T altitude_floor = 20;  // m
 #endif
-        T randomization = 0;  // every factor uniform in [1 - r, 1 + r]
         T wind_speed_max = 0;  // m/s, constant horizontal wind, random direction
         StartMode start = TRIMMED;
         // RANDOM start: alpha and beta are sampled directly, so the airplane never starts stalled
@@ -323,12 +300,6 @@ namespace fixed_wing{
 #endif
         T random_alpha_range[2] = {T(-0.06981317007977318), T(0.17453292519943295)};  // -4, 10 deg
         T random_beta_max = T(0.13962634015954636);  // 8 deg
-        // clip of the error integrals, also their observation scale: about 20 s of 1 m/s, 5 m and 14 deg
-        T error_integral_limits[3] = {20, 100, 5};  // m, m s, rad s
-        // tracking task: the integral of the position error forgets with this time constant, so that the approach
-        // (up to 50 m for a few seconds) leaves it within about 10 s; a steady 20 m offset gives 200 m s, observed as 1
-        T position_integral_time = 10;  // s
-        T position_integral_scale = 200;  // m s
         // tracking task with FW_FINE_POSITION: scale of the fine position error, tanh(error / scale)
         T fine_position_scale = 2;  // m
         // tracking task: the reference starts up to 50 m away horizontally and 15 m vertically, flies at 20-28 m/s
@@ -388,7 +359,7 @@ namespace fixed_wing{
     // observation tags for RLtools: what the actor sees (PX4 estimates + last actions) and what the critic sees
     template <typename TI>
     struct ActorObservation{
-        static constexpr TI DIM = N_TASK_ERRORS + 16 + N_INTEGRALS + N_FINE + N_ACTUATORS * ACTION_HISTORY;
+        static constexpr TI DIM = N_TASK_ERRORS + 16 + N_FINE + N_ACTUATORS * ACTION_HISTORY;
     };
     template <typename TI>
     struct CriticObservation{

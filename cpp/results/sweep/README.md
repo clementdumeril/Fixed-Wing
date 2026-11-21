@@ -1,5 +1,8 @@
 # Network and batch size sweep in C++ (Slurm jobs 40480186 and 40498924, 24-25 October 2026)
 
+The Slurm files, targets, options and folders named here that are no longer in the code are in tag
+`experiments-2026-11`.
+
 SAC from RLtools on the C++ port, calm air, nominal airplane, same reward, curriculum gate and actor (64-64) as the
 Python runs; only the critic hidden size and the batch size change. 1 M steps, 3 seeds each, one core of a
 cluster node with Intel MKL, evaluated on the 100 test scenarios of the Python environment.

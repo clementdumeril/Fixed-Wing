@@ -1,5 +1,8 @@
 # Position error observed on a fine scale (PX4 advanced_plane, tracking)
 
+The Slurm files, targets, options and folders named here that are no longer in the code are in tag
+`experiments-2026-11`.
+
 Job 41035244, `slurm/tracking_px4plane_fine.slurm`, target `train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine`.
 The error left after the reward work is a steady offset of 3-4 m per axis (`results/near_px4plane`): 4 m is only 0.2 in
 the observation scaled by 20 m. Here the actor and the critic also see tanh(error / S) in the body frame (65 values

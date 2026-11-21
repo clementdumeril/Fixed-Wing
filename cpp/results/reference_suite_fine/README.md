@@ -1,5 +1,8 @@
 # Tracking a point that accelerates: the fine-observation actors (Savio, 10 November 2026)
 
+The Slurm files, targets, options and folders named here that are no longer in the code are in tag
+`experiments-2026-11`.
+
 The suite of [`reference_suite`](../reference_suite/README.md) (same motions, levels, starts and 100 flights per
 level), flown by the best checkpoints of the two most precise runs on the straight line
 ([`fine_px4plane`](../fine_px4plane/README.md)), both trained only on points that fly straight:

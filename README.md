@@ -34,7 +34,7 @@ flowchart LR
     A["Flight data<br/>(not yet)"] -->|"identification<br/>(IROS 2024 method)"| B["Airframe model"]
     G["Gazebo AdvancedLiftDrag<br/>coefficients, or specs"] --> B
     B --> C["6-DOF simulator<br/>L2F structure, C++ / RLtools"]
-    C --> D["SAC training<br/>L2F recipe, 8 M steps"]
+    C --> D["SAC training<br/>L2F recipe, 4 M steps"]
     D --> E["Best checkpoint<br/>(validation)"]
     E --> F["Tests: 100 flights,<br/>points that accelerate"]
     E --> H["PX4 SITL in Gazebo<br/>ROS 2 node, 50 Hz"]
@@ -46,10 +46,10 @@ flowchart LR
    Loianno, IROS 2024), is the next step and is not done here.
 2. **Simulator.** 6-DOF rigid body, actuator lag and latency, RK4 at 50 Hz, in the structure of L2F (parameters, state,
    observe / reward / terminate), so that RLtools trains on it as on its quadrotor.
-3. **Training.** SAC with L2F's update intervals and batch, asymmetric actor-critic, random starts (roll ±60°), 8 M
-   steps: 32 min on one core, 95 % of it in the network updates. Reward: L2F's form (2 minus squared costs, gated curriculum of the weights), with a
-   velocity target toward the point, a fine-scale position input and a bonus for staying close
-   ([method](docs/method.md)).
+3. **Training.** SAC with L2F's update intervals and batch, asymmetric actor-critic, random starts (roll ±60°), 4 M
+   steps: 16.7 min on one core, 95 % of it in the network updates. Reward: L2F's form with the norms of the errors (2
+   minus weighted norms, the weights grown every 100 k steps), with a velocity target toward the point, a fine-scale
+   position input and a bonus for staying close ([method](docs/method.md), [recipe](cpp/README.md#the-precision-recipe)).
 4. **Selection.** Every 50 k steps a validation flight set; the kept actor is the most precise one with at least 97 %
    of flights completed.
 5. **Tests.** 100 flights from level and from random starts on a straight line, then circles, helices, figure-eights
@@ -62,8 +62,10 @@ flowchart LR
 
 From the L2F reward (9.8 m) to 1.4 m, each change kept: a stronger velocity target toward the point (K 0.1 to 0.3 /s),
 the position error also seen on a 2 m scale with a bonus for being close, the precise checkpoint choice, a larger
-bonus weight and twice the steps. What is left is a steady offset of about 1 m per axis (behind, sideways, altitude)
-with 0.1 m of motion around it ([`fine_px4plane`](cpp/results/fine_px4plane/README.md)). L2F's smaller critics (32 or
+bonus weight and twice the steps. The same terms as norms instead of squares, as in RLtools' L2F reward, reach 1.4 m
+in 4 M steps, 16.7 min instead of 32 ([`reward_px4plane`](cpp/results/reward_px4plane/README.md)); that is the recipe
+the code keeps. What is left is a steady offset of about 1 m per axis (behind, sideways, altitude) with 0.1 m of
+motion around it ([`fine_px4plane`](cpp/results/fine_px4plane/README.md)). L2F's smaller critics (32 or
 64 instead of 128) train 1.7–2.7 times faster but lose the precision
 ([`speed_px4plane`](cpp/results/speed_px4plane/README.md)). Script: `cpp/tools/plot_error_reduction.py`.
 
@@ -108,13 +110,17 @@ bash deploy/ros2/setup_wsl.sh ~/PX4-Autopilot <RLtools include directory>
 bash deploy/ros2/fly_sitl.sh
 ```
 
-All targets and options: [cpp/README.md](cpp/README.md). Figure scripts: [docs/reproduce.md](docs/reproduce.md).
+All targets and options: [cpp/README.md](cpp/README.md). Figure scripts: [docs/reproduce.md](docs/reproduce.md). The
+code keeps the recipes that worked; every variant tried along the way is in tag `experiments-2026-11`.
 
 ## Limitations
 
 - Simulation only, no real flight. The Eratix model comes from specs and textbook aerodynamics, not flight data yet.
-- The tracking policies are trained and tested in calm air; wind and turbulence exist only in the Python task.
-- No domain randomization in the reported runs, so the sim-to-real question behind the project is still open.
+- The precision and Eratix policies are trained and tested in calm air. The C++ task with the simple reward adds wind,
+  Dryden turbulence, gusts, thermals and a randomized airplane: 84–90 % of 120 s disturbed flights completed, 99–100 %
+  in calm air (Savio job 41645214).
+- Only those simple-reward runs randomize the airplane (mass ±10 %, thrust ±15 %, coefficients ±10 %, latency 0–2
+  steps), so the sim-to-real question behind the project is still open.
 - On the first task (hold airspeed, altitude, course in wind) a tuned PID still completes more flights than SAC.
 
 ## Credits

@@ -1,5 +1,8 @@
 # The reward with norms instead of squares (PX4 advanced_plane, tracking)
 
+`slurm/tracking_px4plane_reward.slurm` now runs `norm_bonus4` only; the job file with the three variants is in tag
+`experiments-2026-11`.
+
 Job 41220553, `slurm/tracking_px4plane_reward.slurm`, `--reward l2f-norm`. The reward of RLtools' L2F environment at
 b32d9985 (`l2f/parameters/reward_functions/squared`) takes the norm of each error (distance to the point, velocity
 error, command change), not its square. Our L2F form squared them, so one meter near the point cost almost nothing

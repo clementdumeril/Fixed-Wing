@@ -1,4 +1,4 @@
-"""Figure and table of the network and batch size sweep (slurm/sweep.slurm, slurm/train.slurm).
+"""Figure and table of the network and batch size sweep (results/sweep; its Slurm files are in tag experiments-2026-11).
 
 python tools/plot_sweep.py results/sweep   (from cpp/)
 

@@ -1,4 +1,5 @@
 """python tools/compare_wind_with_python.py <path to the check_wind executable>"""
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -85,6 +86,62 @@ def expected_wind(wind, sigma, length_scale, gusts, thermals, position, orientat
     return total, operations.thermal_updraft(thermals, drifted)
 
 
+def symmetric_eigen_2x2(a, b, c):
+    sm, df, tb = a + c, a - c, b + b
+    adf, ab = abs(df), abs(tb)
+    acmx, acmn = (a, c) if abs(a) > abs(c) else (c, a)
+    if adf > ab:
+        rt = adf * math.sqrt(1 + (ab / adf) * (ab / adf))
+    elif adf < ab:
+        rt = ab * math.sqrt(1 + (adf / ab) * (adf / ab))
+    else:
+        rt = ab * math.sqrt(2.0)
+    if sm < 0:
+        rt1, sgn1 = 0.5 * (sm - rt), -1
+        rt2 = (acmx / rt1) * acmn - (b / rt1) * b
+    elif sm > 0:
+        rt1, sgn1 = 0.5 * (sm + rt), 1
+        rt2 = (acmx / rt1) * acmn - (b / rt1) * b
+    else:
+        rt1, rt2, sgn1 = 0.5 * rt, -0.5 * rt, 1
+    cs, sgn2 = (df + rt, 1) if df >= 0 else (df - rt, -1)
+    if abs(cs) > ab:
+        ct = -tb / cs
+        sn1 = 1 / math.sqrt(1 + ct * ct)
+        cs1 = ct * sn1
+    elif ab == 0:
+        cs1, sn1 = 1.0, 0.0
+    else:
+        tn = -cs / tb
+        cs1 = 1 / math.sqrt(1 + tn * tn)
+        sn1 = tn * cs1
+    if sgn1 == sgn2:
+        cs1, sn1 = -sn1, cs1
+    return rt1, rt2, cs1, sn1
+
+
+def noise_gain_as_cpp(covariance):
+    d0, d1, e = float(covariance[0, 0]), float(covariance[1, 1]), float(covariance[1, 0])
+    eps, safe_min = np.finfo(float).eps / 2, np.finfo(float).tiny
+    if e == 0 or abs(e) <= math.sqrt(abs(d0)) * math.sqrt(abs(d1)) * eps or e * e <= (eps * eps * abs(d0)) * abs(d1) + safe_min:
+        values, vectors = [d0, d1], np.eye(2)
+    else:
+        rt1, rt2, cs, sn = symmetric_eigen_2x2(d0, e, d1)
+        values, vectors = [rt1, rt2], np.array([[cs, -sn], [sn, cs]])
+    if values[1] < values[0]:
+        values, vectors = values[::-1], vectors[:, ::-1]
+    gain = vectors * np.sqrt(np.clip(values, 0, None))
+    lapack_covariance = lapack_noise_gain(covariance) @ lapack_noise_gain(covariance).T
+    factor_error[0] = max(factor_error[0], float(np.max(np.abs(gain @ gain.T - lapack_covariance))))
+    factor_error[1] = max(factor_error[1], float(np.max(np.abs(lapack_covariance))))
+    return gain
+
+
+lapack_noise_gain = operations._noise_gain
+factor_error = [0.0, 0.0]
+operations._noise_gain = noise_gain_as_cpp
+
+
 def turbulence_sequence(rng, k):
     length_scale = [dryden_low_altitude_moderate().length_scale, np.array([533.0, 533.0, 533.0]),
                     rng.uniform(20, 600, 3)][k % 3]
@@ -149,6 +206,9 @@ def main():
             worst["Dryden states"] = max(worst.get("Dryden states", 0.0), float(np.max(np.abs(cpp - state))))
             scale["Dryden states"] = max(scale.get("Dryden states", 0.0), float(np.max(np.abs(state))))
             counts["Dryden states"] = counts.get("Dryden states", 0) + 1
+    worst["Dryden noise gain"] = factor_error[0]
+    scale["Dryden noise gain"] = factor_error[1]
+    counts["Dryden noise gain"] = 8 * sum(len(steps) for _, _, steps in sequences)
     ok = True
     for name, error in worst.items():
         ok &= error <= 1e-9 * max(1.0, scale[name])

@@ -1,5 +1,8 @@
 # Closing the steady lag: a linear distance cost and a stronger velocity correction (Savio, 6 November 2026)
 
+The Slurm files, targets, options and folders named here that are no longer in the code are in tag
+`experiments-2026-11`.
+
 `slurm/tracking_px4plane_precision.slurm` (job 40986502): SAC, critic 128, L2F intervals and batch, `--reward
 l2f-penalty`, 4 M steps, 10 seeds, best checkpoint every 50 k steps. The reference is
 [`l2f_reward_px4plane`](../l2f_reward_px4plane/README.md) (same recipe, velocity correction K = 0.1 /s, no linear

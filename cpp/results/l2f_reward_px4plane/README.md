@@ -1,6 +1,9 @@
 # The reward form of Learning to Fly in Seconds on PX4's advanced_plane (lab PC, 5 November 2026)
 
-Same task and recipe as [`l2f_td3_px4plane`](../l2f_td3_px4plane/README.md) (SAC, critic 128, batch 256, critics
+The Slurm files, targets, options and folders named here that are no longer in the code are in tag
+`experiments-2026-11`.
+
+Same task and recipe as `l2f_td3_px4plane` (SAC, critic 128, batch 256, critics
 every 10 steps and actor every 20, 4 M steps, best checkpoint every 50 k steps), with only the reward changed
 (`--reward`, `RewardConfig::l2f_form` in `include/fixed_wing/fixed_wing.h`): survival 2 minus weighted squared scaled
 errors (position / 20 m, velocity toward the point / 4 m/s, sideslip / 5°, command change, stall margin), no tanh
@@ -36,7 +39,7 @@ rewards match the stored ones to 4e-7 (`reward_check.txt`).
 ## 10 seeds on Savio (job 40965874, `slurm/tracking_px4plane_l2freward.slurm`)
 
 `l2f-penalty` against our tanh reward, same recipe and seeds, the tanh runs from
-[`l2f_td3_px4plane`](../l2f_td3_px4plane/README.md) (same machine type):
+`l2f_td3_px4plane` (same machine type):
 
 | 10 seeds | Flies after | Best: test A | Best: position | Best: velocity | Best: command change | Last: test A, position |
 | --- | --- | --- | --- | --- | --- | --- |

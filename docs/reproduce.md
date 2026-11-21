@@ -7,11 +7,11 @@ Detail moved out of the top-level README. Reward, curriculum and checks: [method
 | Component | Path | What it is | Origin |
 | --- | --- | --- | --- |
 | Simulator | `python/fixed_wing/airplane/` | 6-DOF rigid body, linear aerodynamics (28 coefficients), actuator lag, command latency, RK4 substeps, Newton trim | L2F skeleton, fixed-wing physics mine |
-| Wind | `airplane/operations.py` | constant wind, 1-cos gust, Allen thermals, Dryden turbulence with exact discretization | models from Beard and McLain, Allen (2006) |
+| Wind | `airplane/operations.py`, `cpp/include/fixed_wing/dynamics.h` | constant wind, 1-cos gust, Allen thermals, Dryden turbulence with exact discretization, the same in C++ (`cpp/tools/compare_wind_with_python.py`) | models from Beard and McLain, Allen (2006) |
 | RL task | `airplane/environment.py` | Gymnasium task, reward, gated curriculum with replay-buffer recomputation, one `evaluate` for every pilot | curriculum idea from L2F |
 | Baseline | `airplane/pid.py` | cascaded PID on the same measurements as the actor, bank limited to 30° | mine |
 | Training | `examples/train_sac.py`, `airplane/asymmetric_sac.py` | SAC with an asymmetric actor-critic | stable-baselines3 |
-| C++ port | `cpp/include/fixed_wing/`, `cpp/src/train_sac.cpp` | same airplane and task in the RLtools MDP form; PX4 `advanced_plane`; tracking task (C++ only) | RLtools SAC |
+| C++ port | `cpp/include/fixed_wing/`, `cpp/src/train_sac.cpp` | same airplane and task in the RLtools MDP form; PX4 `advanced_plane` and the Eratix; tracking task in calm air and in wind and thermals (C++ only) | RLtools SAC |
 | PX4 deployment | `cpp/deploy/ros2/fw_policy/`, `cpp/tools/export_policy.py`, `cpp/src/compare_sitl.cpp` | ROS 2 node that flies an exported actor on PX4 SITL over uXRCE-DDS, and a replay of SITL logs in this simulator | mine |
 | Diagnostics | `examples/diagnose_flights.py`, `examples/reward_saturation.py` | attitude in straight flight, cause of every failure, reward flatness under exploration noise | mine |
 | Tests | `python/tests/` | 51 tests: trim, control signs, wind, Allen and Dryden statistics, Gymnasium checker, reward recomputation | mine |
@@ -53,7 +53,7 @@ From `python/`, on a committed run directory:
 | `cpp/results/sweep/sweep.png` | `python tools/plot_sweep.py results/sweep` (from `cpp/`) |
 | `docs/figures/error_reduction.png` | `python tools/plot_error_reduction.py ../docs/figures/error_reduction.png` (from `cpp/`) |
 | `cpp/results/reference_suite_fine/compare.png` | `python tools/plot_reference_compare.py results/reference_suite_fine/compare.png "<label>=<summary.csv>" ...` (from `cpp/`, command in its README) |
-| `docs/media/*.gif` | `build/evaluate_reference_fine <run>/best_actor.h <out> --record 3`, then `python tools/render_flight_video.py <out>/flights/level_<motion>_<level>.csv <gif> --dpi 70 --fps 12 --speed 3` (from `cpp/`; flights of `fine2m_bonus4` seed 4: straight 0, circle 7 and 10, figure_eight 7) |
+| `docs/media/*.gif` | `build/evaluate_reference_fine <run>/best_actor.h <out> --record 3`, then `python tools/render_flight_video.py <out>/flights/level_<motion>_<level>.csv <gif> --dpi 70 --fps 12 --speed 3` (from `cpp/`; flights of `fine2m_bonus4` seed 4: straight 0, circle 7 and 10, figure_eight 7; that run's job file is in tag `experiments-2026-11`) |
 | `docs/figures/overview.png` | hand-written `docs/figures/overview.svg`, crops of the GIF frames above (`ov_*.png`) |
 
 `model.zip` is committed for `calm_seed0` and `windy_seed2` only.

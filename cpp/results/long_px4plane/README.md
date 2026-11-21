@@ -1,5 +1,8 @@
 # 3 M steps on PX4's advanced_plane, with the best checkpoint (Savio, 3 November 2026)
 
+The Slurm files, targets, options and folders named here that are no longer in the code are in tag
+`experiments-2026-11`.
+
 `slurm/tracking_px4plane_long.slurm` (job 40821853): the tracking task on the advanced_plane, critic 128, batch 64,
 networks updated at every step, 3 M steps, seeds 0 to 9. Every 50 k steps the actor flies 100 validation flights from
 random starts (seed 54321, not the test flights) and is kept if its score, position RMSE + 10 m per % of failed flights,
@@ -29,7 +32,7 @@ Validation during training, mean of the 10 seeds:
 - **The success rate stops rising after about 600 k steps and then oscillates** (87 % at 2.4 M), while the position
   error keeps falling slowly. The best checkpoints sit between 0.9 and 2.8 M steps, most of them between 1.6 and 2.3 M.
 - **Batch 64 against batch 256 at equal computation** (an update with 256 samples costs about 4 times one with 64): at
-  1.6 M steps batch 64 validates at 92 % and 15 m, batch 256 at 400 k steps ([`batch_px4plane`](../batch_px4plane/README.md),
+  1.6 M steps batch 64 validates at 92 % and 15 m, batch 256 at 400 k steps (`batch_px4plane`,
   4 seeds, lab PC) at 95 % and 15 m. About the same; `slurm/tracking_px4plane_batch.slurm` runs batch 256 on Savio,
   10 seeds, for the same-machine comparison.
 
@@ -43,7 +46,7 @@ the curve) in grey, the wall-clock time under the steps, as in Fig. 3 and 4 of t
   trainings without the validation flights, which double the time here).
 - `figures/episode_return.png`, `figures/validation.png`: return, and the validation flights every 50 k steps.
 - `figures/compare_episode_length.png`, `figures/compare_position_error.png`: batch 64 (job 40803749, 10 seeds) against
-  batch 256 ([`batch_px4plane`](../batch_px4plane/README.md), 4 seeds) over the first 400 k steps.
+  batch 256 (`batch_px4plane`, 4 seeds) over the first 400 k steps.
 - `figures/test_flights.png`: as Fig. 5 of the paper, in the frame of the moving point (the black dot): 5 test flights of
   seed 8's best checkpoint, and the S9 policy flown in PX4 SITL with Gazebo.
 

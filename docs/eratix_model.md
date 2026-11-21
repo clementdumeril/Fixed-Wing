@@ -261,7 +261,8 @@ thrust at full throttle.
 
 - **Existing airplanes unchanged.** The advanced_plane keeps its own `advanced_aerodynamics()` untouched; the Eratix
   code is behind `if constexpr` and `#if FW_AIRPLANE == 2`. `train_sac_c128_b256_tracking_g995_px4plane_i10a20` built
-  before and after the change, run for 40k steps with the arguments of `slurm/tracking_px4plane_l2f.slurm`
+  before and after the change, run for 40k steps with the arguments of `slurm/tracking_px4plane_l2f.slurm` (target
+  and job file in tag `experiments-2026-11`)
   (`--checkpoint-interval 20000`): progress.csv (without the wall-time column), checkpoints.csv, config.json, the three
   evaluations, the three flight logs and actor.h are identical.
 - **Smoke training**, `train_sac_c128_b256_tracking_g995_eratix_i10a20`, seed 0, 1.5M steps with the arguments of

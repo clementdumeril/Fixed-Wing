@@ -32,7 +32,26 @@ the machine for most of the time.
 
 ## Files
 
-- `large_300k/`, `small_1M/`: `evaluation.json`, `progress.csv`. In `large_300k/progress.csv` the episode length and
+- `large_300k/` (`train_sac`), `small_1M/` (`train_sac_small`, critic 64 and batch 64, in tag `experiments-2026-11`):
+  `evaluation.json`, `progress.csv`. In `large_300k/progress.csv` the episode length and
   return are estimated over a 10 000-step window, which can exceed 1500 steps; later runs count only the episodes that
   end inside a 50 000-step window.
 - `training.png`: made with `python/examples/plot_training.py`.
+
+## Result folders
+
+- [`sweep/`](sweep/README.md): network and batch sizes on the first task.
+- [`long_px4plane/`](long_px4plane/README.md): 3 M steps on the advanced_plane with the best checkpoint, and the
+  figure of the PX4 SITL flight against this simulator.
+- [`l2f_reward_px4plane/`](l2f_reward_px4plane/README.md): the L2F reward form with squared errors, 9.8 m.
+- [`precision_px4plane/`](precision_px4plane/README.md): closing the steady lag, velocity guidance K = 0.3 /s, 6.6 m.
+- [`fine_px4plane/`](fine_px4plane/README.md): the fine-scale observation and the closeness bonus, 4.9, 2.4 and 1.8 m.
+- [`speed_px4plane/`](speed_px4plane/README.md): training time against precision, 1.4 m in 8 M steps.
+- [`reward_px4plane/`](reward_px4plane/README.md): the norms instead of the squares, 1.4 m in 4 M steps: the precision
+  recipe of `slurm/tracking_px4plane_reward.slurm`.
+- [`reference_suite/`](reference_suite/README.md), [`reference_suite_fine/`](reference_suite_fine/README.md): points
+  that turn or change speed.
+- [`eratix/`](eratix/README.md): the first Eratix model, `slurm/tracking_eratix.slurm`.
+
+The folders of the other variants (batch 256, the L2F update intervals, TD3 and its smoothing, near starts) are in tag
+`experiments-2026-11`.

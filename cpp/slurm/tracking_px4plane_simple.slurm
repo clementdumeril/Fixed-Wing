@@ -1,4 +1,10 @@
 #!/bin/bash
+# The simple reward (RLtools' L2F environment in meters, constant 35) on PX4's advanced_plane in wind, Dryden
+# turbulence, gusts and drifting thermals, with randomized airplanes: energy weights 0, 0.1 and 0.3, 8M steps, 4 seeds
+# each (job 41645214: 84-90 % of the 120 s disturbed test flights completed, 99-100 % in calm air).
+# Submit from Fixed-Wing/cpp after slurm/build.slurm:
+# sbatch slurm/tracking_px4plane_simple.slurm
+# RUN_TAG names the runs, EXTRA_OPTIONS adds train_sac options: sbatch --export=ALL,EXTRA_OPTIONS="--calm" ...
 #SBATCH --job-name=fw-cpp-px4plane-simple
 #SBATCH --account=ic_piml
 #SBATCH --partition=savio4_htc
@@ -24,5 +30,5 @@ EXTRA_OPTIONS=${EXTRA_OPTIONS:-}
 build/train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind build/scenarios_calm.txt \
     "runs/tracking_px4plane_${RUN_TAG}_energy${ENERGY_WEIGHT}_${SLURM_ARRAY_JOB_ID}_seed${SEED}" "$SEED" 8000000 \
     --reward simple --energy-weight "$ENERGY_WEIGHT" --energy-ramp 1000000 3000000 \
-    --distance-max 30 --near-start 1 5 --start trimmed --reference-heading-max 20 --fine-position-scale 2 \
+    --distance-max 30 --near-start 1 5 --start trimmed --reference-heading-max 20 \
     --curriculum-period 100000 --checkpoint-interval 50000 --checkpoint-precise 0.97 1000000 --eval-duration 120 $EXTRA_OPTIONS

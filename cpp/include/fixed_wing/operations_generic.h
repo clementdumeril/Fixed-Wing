@@ -96,10 +96,7 @@ namespace rl_tools{
         const auto& c = env.config;
         auto uniform = [&](T lo, T hi){ return random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), lo, hi, rng); };
         fixed_wing::task_parameters(c, p);
-        T r = c.randomization;
-        for(int i = 0; i < 4 + fixed_wing::N_COEFFICIENTS; i++){
-            p.randomization[i] = r > 0 ? uniform(1 - r, 1 + r) : T(1);
-        }
+        for(int i = 0; i < 4 + fixed_wing::N_COEFFICIENTS; i++) p.randomization[i] = T(1);
         auto factor = [&](T range){ return range > 0 ? uniform(1 - range, 1 + range) : T(1); };
         if(c.randomization_mass > 0) p.randomization[0] = factor(c.randomization_mass);
         if(c.randomization_thrust > 0) p.randomization[2] = factor(c.randomization_thrust);
@@ -183,7 +180,7 @@ namespace rl_tools{
             // a reference point near the airplane, flying straight at constant velocity; the setpoints follow it
             T heading = fixed_wing::wrap(course + uniform(-c.course_change_max, c.course_change_max));
             T speed = uniform(c.reference_speed_range[0], c.reference_speed_range[1]);
-            // one draw either way: with the default, the same starts as before the option existed
+            // one draw either way, so that the other draws do not depend on the bearing range
             T bearing = c.reference_bearing_max >= T(fixed_wing::PI) ? uniform(T(-fixed_wing::PI), T(fixed_wing::PI))
                       : fixed_wing::wrap(course + uniform(-c.reference_bearing_max, c.reference_bearing_max));
             // the draw for a near start only when the option is on: without it, the same starts as before

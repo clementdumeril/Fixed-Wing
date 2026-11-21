@@ -1,54 +1,51 @@
-// SAC on the fixed-wing task with RLtools: same task, network sizes and hyperparameters as python/examples/train_sac.py
-// (asymmetric actor-critic, gated reward curriculum with replay-buffer recomputation), then an evaluation on the
-// 100 test scenarios of the Python environment and on 100 random starts.
+// SAC on the fixed-wing tasks with RLtools: asymmetric actor-critic, gated reward curriculum with replay-buffer
+// recomputation, best checkpoint on validation flights, then the tests.
 //
-// train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward]
-//           [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG]
-//   scenarios.txt: tools/export_scenarios.py; out_dir gets config.json, progress.csv, evaluation.json (Python
-//   scenarios) and evaluation_random.json (random starts, the same for every run), flights.csv and flights_random.csv
-//   (the first 10 test flights of each, step by step) and actor.h (the trained actor as C++ code)
-//   --alpha-weight: weight of the reward term that keeps a margin to the stall (RewardConfig::alpha_margin_weight)
-//   --start: how the training episodes start (TaskConfig::start)
+// train_sac <scenarios.txt> <out_dir> [seed] [steps] [options]
+//   scenarios.txt: tools/export_scenarios.py, the 100 test scenarios of the Python environment (first task only).
+//   out_dir gets config.json, progress.csv, the tests (evaluation*.json, the first 10 flights of each step by step in
+//   flights*.csv) and actor.h (the trained actor as C++ code). steps counts airplane steps.
+// Targets (CMakeLists.txt):
+//   train_sac: the first task of python/examples/train_sac.py (airspeed, altitude, course) on the Aerosonde, with its
+//   network sizes and hyperparameters. Test A: the Python scenarios; test B: 100 random starts (evaluation_random.json)
+//   train_sac_*_tracking_*: reach and follow a point that flies straight (FW_TRACKING). Test A: 100 normal flights
+//   (neutral start); test B: 100 random starts; evaluation_ahead.json: test B with the point within 45 deg ahead.
+//   _px4plane: PX4's advanced_plane (FW_AIRPLANE=1); _eratix: the lab's E-flite UMX Eratix (FW_AIRPLANE=2,
+//   docs/eratix_model.md); _i10a20: the critics updated every 10 steps and the actor every 20, as the L2F paper;
+//   _fine: the position error also observed on a 2 m scale (FW_FINE_POSITION); _wind: wind, turbulence, gusts,
+//   thermals and randomized airplanes (FW_DISTURBANCES), tested on 100 disturbed and 100 calm flights of
+//   --eval-duration seconds (evaluation_disturbed.json, evaluation_calm.json)
+// Options:
+//   --start trimmed|neutral|random: how the training episodes start (TaskConfig::start)
 //   --no-trim-reward: no trim term in the reward, so that the policy finds trim on its own
-//   --huber: Huber instead of square on the scaled tracking errors (RewardConfig::huber_delta)
-//   --position-scale, --position-linear: tracking task, scale of the position cost and weight of the linear distance
-//   cost (RewardConfig::position_scale, position_linear_weight)
-//   --velocity-guidance: tracking task, the velocity cost is on the error to the reference velocity plus K x the
+//   --alpha-weight W: weight of the reward term that keeps a margin to the stall (RewardConfig::alpha_margin_weight)
+//   --position-scale S, --position-linear W: tracking task, scale of the position cost and weight of the linear distance
+//   cost of the tanh reward (RewardConfig::position_scale, position_linear_weight)
+//   --velocity-guidance K: tracking task, the velocity cost is on the error to the reference velocity plus K x the
 //   position error toward the reference, at most 5 m/s (RewardConfig::velocity_guidance_gain)
-//   --reference-bearing-max: tracking task, the point starts within DEG of the airplane's course (default 180: anywhere
-//   around it; TaskConfig::reference_bearing_max). Tracking runs also write evaluation_ahead.json: test B with the
-//   point within 45 deg ahead
-//   --curriculum-stage: no curriculum, the reward weights of stage S (0 to 5) from the start
-//   --curriculum-period: airplane steps between two checks of the curriculum gate (default 100000, as L2F)
-//   --profile: time each part of a training step (airplanes, batch, critics, critic targets, actor and entropy
-//   coefficient) and write profile.json
-//   --checkpoint-interval N: every N airplane steps, fly the actor on 100 validation flights (random starts, not the
-//   test flights) and keep the best one: best_actor.h, its tests in evaluation_best*.json and checkpoints.csv. The
-//   score is the RMS error of the completed flights (position, or course for the course task) + 10 per % of failed
-//   flights. The validation flights have their own random numbers, so training is the same as without the option
+//   --curriculum-period P: airplane steps between two checks of the curriculum gate (default 100000, as L2F)
+//   --checkpoint-interval N: every N airplane steps, fly the actor on 100 validation flights (not the test flights) and
+//   keep the best one: best_actor.h, its tests in evaluation_best*.json and checkpoints.csv. The score is the RMS error
+//   of the completed flights (position, or course for the first task) + 10 per % of failed flights. The validation
+//   flights have their own random numbers, so training is the same as without the option
 //   --checkpoint-precise P N: the best checkpoint is the most precise one among those with a validation success of at
 //   least P (fraction) after N airplane steps; if there is none, the default score among the others
-//   --action-change-scale K: K times the weight of the command-change cost at every curriculum stage (default 1)
-//   --reward tanh|l2f|l2f-penalty: the reward form (default tanh, ours); l2f: the form and schedule of Learning to Fly
-//   in Seconds (survival 2 minus weighted squared errors, clipped at 0, weights grown every --curriculum-period);
-//   l2f-penalty: the same clipped at -2 with a termination penalty of 2 / (1 - gamma) (RewardConfig::l2f_form);
-//   l2f-norm: l2f-penalty with the norms of the errors instead of their squares, as the L2F reward of RLtools at
-//   b32d9985 (RewardConfig::l2f_norms)
-//   --position-l1 W: with the L2F form, a cost of W per meter of distance to the point (RewardConfig::position_l1_weight)
-//   --position-bonus W [--position-bonus-scale S0 MIN]: with the L2F form, a bonus W exp(-(d / s)^2) for being close to
-//   the point, its scale s shrunk by the curriculum from S0 (default 10 m) to MIN (1 m) (RewardConfig::position_bonus_weight);
-//   --position-bonus-adaptive F: the scale follows F x the mean training distance to the point instead (never growing)
-//   --fine-position-scale S: with the train_sac_*_fine targets, scale of the fine position error (default 2 m)
+//   --reward tanh|l2f-norm|simple: the reward form. tanh (default): survival minus a capped cost; l2f-norm: the form and
+//   schedule of Learning to Fly in Seconds with the norms of the errors, as the L2F reward of RLtools at b32d9985
+//   (survival 2 minus weighted norms, clipped at -2, a termination penalty of 2 / (1 - gamma), weights grown every
+//   --curriculum-period; RewardConfig::l2f_form); simple: the reward of RLtools' L2F environment in meters (tracking
+//   task, RewardConfig::simple_form)
+//   --position-bonus W: with l2f-norm, a bonus W exp(-(d / s)^2) for being close to the point; its scale s starts at
+//   20 m and follows half the mean training distance to the point, never growing and never below 1 m
 //   --near-start F D: tracking task, a share F of the training starts puts the point within D m (horizontally and
 //   vertically) instead of 50 m; the airplane state is drawn as usual. Validation and test flights are unchanged
-// steps counts airplane steps; the train_sac_*_e<N> targets fly N airplanes in parallel (FW_N_ENVIRONMENTS), the
-// train_sac_*_i<K> targets update the networks every K steps only (FW_TRAINING_INTERVAL), the *_i10a20 target the
-// critics every 10 steps and the actor every 20, as the L2F paper (FW_ACTOR_INTERVAL_FACTOR); the train_td3_* targets
-// train with TD3 instead of SAC (FW_TD3), the algorithm of the L2F paper; the train_sac_*_eratix targets fly the lab's
-// E-flite UMX Eratix instead of the advanced_plane (FW_AIRPLANE=2, docs/eratix_model.md)
-// The train_sac_*_integral targets also observe the time integrals of the errors (FW_ERROR_INTEGRAL).
-// The train_sac_*_tracking targets learn the position and velocity tracking task (FW_TRACKING): scenarios.txt is
-// then not used, and test A is 100 normal flights (neutral start) instead of the Python scenarios.
+//   --energy-weight W, --energy-ramp START END, --simple-constant C: --reward simple, the weight of the energy term
+//   ramped from 0 to W between the two steps (default 1M and 3M), and the constant of the reward (default 35)
+//   --distance-max D: tracking task, the flight ends more than D m from the point; --reference-heading-max DEG: spread of
+//   the point's heading (tracking) or of the course setpoint (first task) around the airplane's course (default 90)
+//   --eval-duration S, --calm, --wind-max V, --turbulence-max K, --gust-rate R, --thermal-fraction F, --turn-fraction F:
+//   the _wind target, test duration (default 120 s) and the disturbances of the training, validation and test flights
+//   (TaskConfig; --calm removes the wind, turbulence, gusts and thermals)
 #include <rl_tools/operations/cpu_mux.h>
 
 #include <fixed_wing/operations_generic.h>
@@ -56,24 +53,13 @@
 #include <rl_tools/nn/optimizers/adam/instance/operations_generic.h>
 #include <rl_tools/nn/operations_cpu_mux.h>
 #include <rl_tools/nn/layers/sample_and_squash/operations_generic.h>
-#include <rl_tools/nn/layers/td3_sampling/operations_generic.h>  // TD3 actor output (FW_TD3), before the sequential model
 #include <rl_tools/nn_models/mlp/operations_generic.h>
 #include <rl_tools/nn_models/random_uniform/operations_generic.h>
 #include <rl_tools/nn_models/sequential/operations_generic.h>
 #include <rl_tools/nn/optimizers/adam/operations_generic.h>
 
-// TD3 instead of SAC (FW_TD3=1), as the L2F paper: the train_td3_* targets
-#ifndef FW_TD3
-#define FW_TD3 0
-#endif
-#if FW_TD3
-#include <rl_tools/rl/algorithms/td3/loop/core/config.h>
-#include <rl_tools/rl/algorithms/td3/loop/core/operations_generic.h>
-#include <rl_tools/nn/layers/td3_sampling/persist_code.h>
-#else
 #include <rl_tools/rl/algorithms/sac/loop/core/config.h>
 #include <rl_tools/rl/algorithms/sac/loop/core/operations_generic.h>
-#endif
 
 // export of the trained actor as C++ code (weights included), the checkpoint format of L2F
 #include <rl_tools/numeric_types/persist_code.h>
@@ -125,11 +111,6 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #ifndef FW_GAMMA
 #define FW_GAMMA 0.99
 #endif
-// airplanes flown in parallel: one network update per step of all of them, so N times fewer updates for the same
-// experience. Almost all the training time is in the updates (an airplane step is about 1000 times cheaper)
-#ifndef FW_N_ENVIRONMENTS
-#define FW_N_ENVIRONMENTS 1
-#endif
 // loop steps between two network updates (critics, actor and entropy coefficient, critic targets): fewer updates per
 // step of experience, as the L2F configurations of RLtools (src/rl/zoo/l2f: every 5 to 16 steps) and the L2F paper
 // (learning-to-fly src/config/config.h: the critics every 10 steps, the actor every 20)
@@ -141,46 +122,6 @@ using ENVIRONMENT = fixed_wing::Environment<fixed_wing::Specification<T_ENV, TI>
 #define FW_ACTOR_INTERVAL_FACTOR 1
 #endif
 
-#ifndef FW_EXPLORATION_NOISE
-#define FW_EXPLORATION_NOISE 0.1  // TD3: std of the Gaussian exploration noise on the normalized actions (RLtools default)
-#endif
-#if FW_TD3
-// TD3 with the settings of the L2F paper (learning-to-fly src/config/config.h): critic targets updated with the critics,
-// actor target with the actor, target-action noise 0.2 clipped at 0.5; exploration noise 0.1 (RLtools default). The
-// rest as the SAC runs (learning rate, warmup, replay buffer). The MLP critic of RLtools' TD3 takes the actor's sizes
-// (td3/loop/core/approximators_mlp.h): the critics are 64 x 64, as in L2F, whatever FW_CRITIC_HIDDEN says
-struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::td3::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
-    struct TD3_PARAMETERS: rlt::rl::algorithms::td3::DefaultParameters<TYPE_POLICY, TI>{
-        static constexpr T GAMMA = FW_GAMMA;
-        static constexpr TI ACTOR_BATCH_SIZE = FW_BATCH;
-        static constexpr TI CRITIC_BATCH_SIZE = FW_BATCH;
-        static constexpr TI CRITIC_TRAINING_INTERVAL = FW_TRAINING_INTERVAL;
-        static constexpr TI ACTOR_TRAINING_INTERVAL = FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR;
-        static constexpr TI CRITIC_TARGET_UPDATE_INTERVAL = FW_TRAINING_INTERVAL;
-        static constexpr TI ACTOR_TARGET_UPDATE_INTERVAL = FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR;
-        static constexpr T TARGET_NEXT_ACTION_NOISE_STD = 0.2;
-        static constexpr T TARGET_NEXT_ACTION_NOISE_CLIP = 0.5;
-    };
-    static constexpr TI N_ENVIRONMENTS = FW_N_ENVIRONMENTS;
-    static constexpr TI N_WARMUP_STEPS = 10000 / N_ENVIRONMENTS;
-    static constexpr TI N_WARMUP_STEPS_CRITIC = N_WARMUP_STEPS;
-    static constexpr TI N_WARMUP_STEPS_ACTOR = N_WARMUP_STEPS;
-    static constexpr TI STEP_LIMIT = STEP_LIMIT_MAX;
-    static constexpr TI REPLAY_BUFFER_CAP = 1000000 / N_ENVIRONMENTS;
-    static constexpr TI ACTOR_HIDDEN_DIM = 64;
-    static constexpr TI ACTOR_NUM_LAYERS = 3;
-    static constexpr TI CRITIC_HIDDEN_DIM = 64;
-    static constexpr TI CRITIC_NUM_LAYERS = 3;
-    static constexpr auto ACTOR_ACTIVATION_FUNCTION = rlt::nn::activation_functions::ActivationFunction::RELU;
-    static constexpr auto CRITIC_ACTIVATION_FUNCTION = rlt::nn::activation_functions::ActivationFunction::RELU;
-    static constexpr T EXPLORATION_NOISE = FW_EXPLORATION_NOISE;
-    struct OPTIMIZER_PARAMETERS: rlt::nn::optimizers::adam::DEFAULT_PARAMETERS_TENSORFLOW<TYPE_POLICY>{
-        static constexpr T ALPHA = 3e-4;
-    };
-};
-static_assert(!FW_TD3 || FW_CRITIC_HIDDEN == 64, "the TD3 critic of RLtools has the actor's size: build with FW_CRITIC_HIDDEN=64");
-using LOOP_CONFIG = rlt::rl::algorithms::td3::loop::core::Config<TYPE_POLICY, TI, RNG, ENVIRONMENT, LOOP_CORE_PARAMETERS>;
-#else
 struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT>{
     struct SAC_PARAMETERS: rlt::rl::algorithms::sac::DefaultParameters<TYPE_POLICY, TI, ENVIRONMENT::ACTION_DIM>{
         static constexpr T GAMMA = FW_GAMMA;
@@ -191,13 +132,12 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
         static constexpr TI ACTOR_TRAINING_INTERVAL = FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR;
         static constexpr TI CRITIC_TARGET_UPDATE_INTERVAL = FW_TRAINING_INTERVAL;
     };
-    // loop steps below: each one steps all the airplanes; the counts are in airplane steps, as with one airplane
-    static constexpr TI N_ENVIRONMENTS = FW_N_ENVIRONMENTS;
-    static constexpr TI N_WARMUP_STEPS = 10000 / N_ENVIRONMENTS;  // uniform random actions, as learning_starts
+    static constexpr TI N_ENVIRONMENTS = 1;
+    static constexpr TI N_WARMUP_STEPS = 10000;  // uniform random actions, as learning_starts
     static constexpr TI N_WARMUP_STEPS_CRITIC = N_WARMUP_STEPS;
     static constexpr TI N_WARMUP_STEPS_ACTOR = N_WARMUP_STEPS;
     static constexpr TI STEP_LIMIT = STEP_LIMIT_MAX;
-    static constexpr TI REPLAY_BUFFER_CAP = 1000000 / N_ENVIRONMENTS;  // per airplane: 1 M transitions in all
+    static constexpr TI REPLAY_BUFFER_CAP = 1000000;
     static constexpr TI ACTOR_HIDDEN_DIM = 64;
     static constexpr TI ACTOR_NUM_LAYERS = 3;  // two hidden layers
     static constexpr TI CRITIC_HIDDEN_DIM = FW_CRITIC_HIDDEN;
@@ -215,7 +155,6 @@ struct LOOP_CORE_PARAMETERS: rlt::rl::algorithms::sac::loop::core::DefaultParame
     };
 };
 using LOOP_CONFIG = rlt::rl::algorithms::sac::loop::core::Config<TYPE_POLICY, TI, RNG, ENVIRONMENT, LOOP_CORE_PARAMETERS>;
-#endif
 using LOOP_STATE = LOOP_CONFIG::State<LOOP_CONFIG>;
 static_assert(!FW_DISTURBANCES || (FW_TRACKING && FW_AIRPLANE == 1), "the train_sac_*_wind targets fly the tracking task with the advanced_plane");
 
@@ -237,19 +176,17 @@ struct Curriculum{
         target.sideslip_weight = 1.0;
         target.trim_weight = 0.3;
     }
-    // --reward l2f: the schedule of L2F (learning-to-fly src/steps/curriculum.h) instead of the gate: every period,
+    // --reward l2f-norm: the schedule of L2F (learning-to-fly src/steps/curriculum.h) instead of the gate: every period,
     // unconditionally, the position weight x1.2 and the velocity and action weights x1.4, each up to a cap, and the
     // stored rewards recomputed. L2F: position 2.5 to 20, velocity and action 0.005 to 0.5 (its errors are in meters
     // within a 0.6 m box); here the same factors on weights sized for our scaled errors (the start values keep the
     // reward of a start 50 m away near 0, as L2F's start costs stay below its survival reward)
     bool l2f = false;
     static constexpr T_ENV L2F_POSITION[2] = {0.3, 2.4}, L2F_VELOCITY[2] = {0.1, 1.0}, L2F_ACTION[2] = {0.05, 0.5};
-    // the scale of the closeness bonus: x0.85 per stage, from 10 m to 1 m in 14 stages
-    T_ENV bonus_scale0 = 10, bonus_scale_min = 1;
-    // --position-bonus-adaptive F > 0: instead of the schedule, at every curriculum check the scale becomes F times
+    // the scale of the closeness bonus (--position-bonus): at every curriculum check it becomes bonus_adaptive times
     // the mean distance to the point over the last period of training flights (never larger than before, never below
     // bonus_scale_min), so that the bonus always reaches where the policy flies. bonus_scale is its current value
-    T_ENV bonus_adaptive = 0, bonus_scale = 10;
+    T_ENV bonus_scale_min = 1, bonus_adaptive = 0.5, bonus_scale = 20;
     bool simple = false;
     fixed_wing::RewardConfig<T_ENV> at_stage(int stage) const {
         if(simple) return initial;
@@ -258,8 +195,7 @@ struct Curriculum{
             c.position_weight = std::fmin(L2F_POSITION[0] * std::pow(T_ENV(1.2), stage), L2F_POSITION[1]);
             c.velocity_weight = std::fmin(L2F_VELOCITY[0] * std::pow(T_ENV(1.4), stage), L2F_VELOCITY[1]);
             c.action_change_weight = std::fmin(L2F_ACTION[0] * std::pow(T_ENV(1.4), stage), L2F_ACTION[1]);
-            c.position_bonus_scale = bonus_adaptive > 0 ? bonus_scale
-                                   : std::fmax(bonus_scale0 * std::pow(T_ENV(0.85), stage), bonus_scale_min);
+            c.position_bonus_scale = bonus_scale;
             return c;
         }
         T_ENV x = T_ENV(std::min(stage, n_stages)) / n_stages;
@@ -283,20 +219,18 @@ TI filled(const BUFFER& rb){ return rb.full ? BUFFER::CAPACITY : rb.position; }
 
 template <typename RUNNER>
 void recompute_rewards(DEVICE& device, RUNNER& runner, const fixed_wing::RewardConfig<T_ENV>& c){
-    // L2F recomputes the stored rewards after each curriculum change (p. 6); one replay buffer per airplane
+    // L2F recomputes the stored rewards after each curriculum change (p. 6)
     constexpr TI N = ENVIRONMENT::ObservationPrivileged::DIM;
     T_ENV o[N], o2[N], a[ENVIRONMENT::ACTION_DIM];
-    for(TI e = 0; e < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; e++){
-        auto& rb = rlt::get(runner.replay_buffers, 0, e);
-        for(TI i = 0; i < filled(rb); i++){
-            for(TI j = 0; j < N; j++){
-                o[j] = rlt::get(rb.observations_privileged, i, j);
-                o2[j] = rlt::get(rb.next_observations_privileged, i, j);
-            }
-            for(TI j = 0; j < ENVIRONMENT::ACTION_DIM; j++) a[j] = rlt::get(rb.actions, i, j);
-            bool terminated = rlt::get(rb.terminated, i, 0) > T(0.5);
-            rlt::set(rb.rewards, i, 0, T(fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c)));
+    auto& rb = rlt::get(runner.replay_buffers, 0, 0);
+    for(TI i = 0; i < filled(rb); i++){
+        for(TI j = 0; j < N; j++){
+            o[j] = rlt::get(rb.observations_privileged, i, j);
+            o2[j] = rlt::get(rb.next_observations_privileged, i, j);
         }
+        for(TI j = 0; j < ENVIRONMENT::ACTION_DIM; j++) a[j] = rlt::get(rb.actions, i, j);
+        bool terminated = rlt::get(rb.terminated, i, 0) > T(0.5);
+        rlt::set(rb.rewards, i, 0, T(fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c)));
     }
 }
 
@@ -307,18 +241,16 @@ double reward_recomputation_error(const RUNNER& runner, const fixed_wing::Reward
     constexpr TI N = ENVIRONMENT::ObservationPrivileged::DIM;
     T_ENV o[N], o2[N], a[ENVIRONMENT::ACTION_DIM];
     double worst = 0;
-    for(TI e = 0; e < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; e++){
-        const auto& rb = rlt::get(runner.replay_buffers, 0, e);
-        for(TI i = 0; i < filled(rb); i++){
-            for(TI j = 0; j < N; j++){
-                o[j] = rlt::get(rb.observations_privileged, i, j);
-                o2[j] = rlt::get(rb.next_observations_privileged, i, j);
-            }
-            for(TI j = 0; j < ENVIRONMENT::ACTION_DIM; j++) a[j] = rlt::get(rb.actions, i, j);
-            bool terminated = rlt::get(rb.terminated, i, 0) > T(0.5);
-            double r = fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c);
-            worst = std::max(worst, std::abs(r - double(rlt::get(rb.rewards, i, 0))));
+    const auto& rb = rlt::get(runner.replay_buffers, 0, 0);
+    for(TI i = 0; i < filled(rb); i++){
+        for(TI j = 0; j < N; j++){
+            o[j] = rlt::get(rb.observations_privileged, i, j);
+            o2[j] = rlt::get(rb.next_observations_privileged, i, j);
         }
+        for(TI j = 0; j < ENVIRONMENT::ACTION_DIM; j++) a[j] = rlt::get(rb.actions, i, j);
+        bool terminated = rlt::get(rb.terminated, i, 0) > T(0.5);
+        double r = fixed_wing::reward_from_critic_observations(o, o2, a, terminated, c);
+        worst = std::max(worst, std::abs(r - double(rlt::get(rb.rewards, i, 0))));
     }
     return worst;
 }
@@ -341,65 +273,6 @@ double task_error(const BUFFER& rb, TI i){
     }
 }
 
-// ----- profiling: the RLtools SAC step (sac/loop/core/operations_generic.h) with a timer around each part -------------
-struct Profile{
-    static constexpr int N = 5;
-    static constexpr const char* names[N] = {"airplanes", "batch", "critics", "critic_targets", "actor"};
-    double seconds[N] = {};
-    double calls[N] = {};  // steps on which the part ran: the updates start after the warmup
-};
-
-template <typename CLOCK_TIME>
-void lap(Profile& p, int part, bool ran, CLOCK_TIME& last){
-    auto now = std::chrono::steady_clock::now();
-    p.seconds[part] += std::chrono::duration<double>(now - last).count();
-    p.calls[part] += ran;
-    last = now;
-}
-
-#if !FW_TD3
-void profiled_step(DEVICE& device, LOOP_STATE& ts, Profile& p){
-    using CORE = LOOP_CORE_PARAMETERS;
-    using SAC = CORE::SAC_PARAMETERS;
-    static_assert(CORE::SHARED_BATCH, "profiled_step follows the shared-batch path of the RLtools step");
-    auto last = std::chrono::steady_clock::now();
-    if(ts.step >= CORE::N_WARMUP_STEPS){
-        rlt::step<1>(device, ts.off_policy_runner, rlt::get_actor(ts), ts.actor_buffers_eval, ts.rng);
-    }
-    else{
-        typename LOOP_CONFIG::EXPLORATION_POLICY exploration_policy;
-        typename LOOP_CONFIG::EXPLORATION_POLICY::template Buffer<> exploration_policy_buffer;
-        rlt::step<0>(device, ts.off_policy_runner, exploration_policy, exploration_policy_buffer, ts.rng);
-    }
-    lap(p, 0, true, last);
-    bool train_critic = ts.step >= CORE::N_WARMUP_STEPS_CRITIC && ts.step % SAC::CRITIC_TRAINING_INTERVAL == 0;
-    bool update_targets = ts.step >= CORE::N_WARMUP_STEPS_CRITIC && ts.step % SAC::CRITIC_TARGET_UPDATE_INTERVAL == 0;
-    bool train_actor = ts.step >= CORE::N_WARMUP_STEPS_ACTOR && ts.step % SAC::ACTOR_TRAINING_INTERVAL == 0;
-    if(train_critic || train_actor){
-        rlt::gather_batch(device, ts.off_policy_runner, ts.critic_batch, ts.rng);
-        rlt::randn(device, ts.action_noise_critic, ts.rng);
-    }
-    lap(p, 1, train_critic || train_actor, last);
-    if(train_critic){
-        for(int i = 0; i < 2; i++){
-            rlt::train_critic(device, ts.actor_critic, ts.actor_critic.critics[i], ts.critic_batch, ts.actor_critic.critic_optimizers[i],
-                              ts.actor_target_buffers[i], ts.critic_buffers[i], ts.critic_target_buffers[i],
-                              ts.critic_training_buffers[i], ts.action_noise_critic, ts.rng);
-        }
-    }
-    lap(p, 2, train_critic, last);
-    if(update_targets) rlt::update_critic_targets(device, ts.actor_critic);
-    lap(p, 3, update_targets, last);
-    if(train_actor){
-        rlt::randn(device, ts.action_noise_actor, ts.rng);
-        rlt::train_actor(device, ts.actor_critic, ts.critic_batch, ts.actor_critic.actor_optimizer, ts.actor_buffers[0],
-                         ts.critic_buffers[0], ts.actor_training_buffers, ts.action_noise_actor, ts.rng);
-    }
-    lap(p, 4, train_actor, last);
-    ts.step++;
-}
-#endif
-
 struct Window{
     // statistics of the last n transitions of the replay buffer
     double task_error = 0, episode_length = 0, episode_return = 0;
@@ -408,34 +281,29 @@ struct Window{
 
 template <typename RUNNER>
 Window window(const RUNNER& runner, TI n){
-    // task error over the last n transitions (n / N of each airplane's buffer); length and return of the episodes
-    // that ended inside them
+    // task error over the last n transitions; length and return of the episodes that ended inside them
     Window w;
     double error = 0, lengths = 0, returns = 0, episodes = 0, terminated = 0;
-    TI available = 0;
-    for(TI e = 0; e < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; e++){
-        const auto& rb = rlt::get(runner.replay_buffers, 0, e);
-        using BUFFER = std::decay_t<decltype(rb)>;
-        TI count = std::min(n / LOOP_CORE_PARAMETERS::N_ENVIRONMENTS, filled(rb));
-        available += count;
-        double episode_steps = 0, episode_rewards = 0;
-        bool started = false;  // the first episode end seen opens the first complete episode
-        for(TI k = count; k-- > 0;){  // oldest first
-            TI i = (rb.position + BUFFER::CAPACITY - 1 - k) % BUFFER::CAPACITY;
-            error += task_error(rb, i);
-            episode_steps += 1;
-            episode_rewards += rlt::get(rb.rewards, i, 0);
-            if(rlt::get(rb.truncated, i, 0) > T(0.5)){
-                if(started){
-                    lengths += episode_steps;
-                    returns += episode_rewards;
-                    episodes += 1;
-                    terminated += rlt::get(rb.terminated, i, 0) > T(0.5) ? 1 : 0;
-                }
-                started = true;
-                episode_steps = 0;
-                episode_rewards = 0;
+    const auto& rb = rlt::get(runner.replay_buffers, 0, 0);
+    using BUFFER = std::decay_t<decltype(rb)>;
+    TI available = std::min(n, filled(rb));
+    double episode_steps = 0, episode_rewards = 0;
+    bool started = false;  // the first episode end seen opens the first complete episode
+    for(TI k = available; k-- > 0;){  // oldest first
+        TI i = (rb.position + BUFFER::CAPACITY - 1 - k) % BUFFER::CAPACITY;
+        error += task_error(rb, i);
+        episode_steps += 1;
+        episode_rewards += rlt::get(rb.rewards, i, 0);
+        if(rlt::get(rb.truncated, i, 0) > T(0.5)){
+            if(started){
+                lengths += episode_steps;
+                returns += episode_rewards;
+                episodes += 1;
+                terminated += rlt::get(rb.terminated, i, 0) > T(0.5) ? 1 : 0;
             }
+            started = true;
+            episode_steps = 0;
+            episode_rewards = 0;
         }
     }
     if(available > 0) w.task_error = error / available;
@@ -802,7 +670,7 @@ std::string evaluate_flights(DEVICE& device, const ACTOR& actor, const std::vect
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--alpha-weight W] [--start trimmed|neutral|random] [--no-trim-reward] [--huber D] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--reference-bearing-max DEG] [--curriculum-stage S] [--curriculum-period P] [--checkpoint-interval N] [--action-change-scale K] [--reward tanh|l2f|l2f-penalty|l2f-norm] [--position-l1 W] [--position-bonus W] [--position-bonus-scale S0 MIN] [--position-bonus-adaptive F] [--near-start F D] [--fine-position-scale S] [--checkpoint-precise P N] [--profile] [--reward simple] [--energy-weight W] [--energy-ramp START END] [--simple-constant C] [--distance-max D] [--reference-heading-max DEG] [--eval-duration S] [--calm] [--wind-max V] [--turbulence-max K] [--gust-rate R] [--thermal-fraction F] [--turn-fraction F]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--start trimmed|neutral|random] [--no-trim-reward] [--alpha-weight W] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--curriculum-period P] [--checkpoint-interval N] [--checkpoint-precise P N] [--reward tanh|l2f-norm|simple] [--position-bonus W] [--near-start F D] [--energy-weight W] [--energy-ramp START END] [--simple-constant C] [--distance-max D] [--reference-heading-max DEG] [--eval-duration S] [--calm] [--wind-max V] [--turbulence-max K] [--gust-rate R] [--thermal-fraction F] [--turn-fraction F]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -814,24 +682,16 @@ int run(int argc, char** argv){
     T_ENV alpha_weight = 0;
     std::string start_name = "trimmed";
     bool trim_reward = true;
-    T_ENV huber_delta = 0;
     fixed_wing::RewardConfig<T_ENV> defaults;
     T_ENV position_scale = defaults.position_scale, position_linear = defaults.position_linear_weight;
     T_ENV guidance = defaults.velocity_guidance_gain;
-    T_ENV bearing_max_deg = 180;
     T_ENV near_fraction = 0, near_offset = 5;  // --near-start F D
-    T_ENV fine_scale = 2;  // --fine-position-scale S
     double precise_min_success = 0;  // --checkpoint-precise P N
     TI precise_after = 0;
-    int fixed_stage = -1;  // >= 0: no curriculum, the reward weights of that stage from the start
     TI curriculum_period = Curriculum{}.period;
     TI checkpoint_interval = 0;  // 0: no validation flights, only the final actor
-    T_ENV action_change_scale = 1;  // times the weight of the command-change cost, at every curriculum stage
-    T_ENV position_bonus = 0;  // --position-bonus W: weight of the closeness bonus (L2F reward form only)
-    T_ENV bonus_scale0 = 10, bonus_scale_min = 1;  // --position-bonus-scale S0 MIN
-    T_ENV bonus_adaptive = 0;  // --position-bonus-adaptive F
-    T_ENV position_l1 = 0;  // --position-l1 W: weight per meter of the linear distance term (L2F reward form only)
-    std::string reward_form = "tanh";  // tanh (ours), l2f (L2F form, floor 0), l2f-penalty (floor -2, termination penalty)
+    T_ENV position_bonus = 0;  // --position-bonus W: weight of the closeness bonus (l2f-norm only)
+    std::string reward_form = "tanh";  // tanh (ours), l2f-norm (L2F form with norms), simple (L2F environment, meters)
     T_ENV energy_weight = 0;
     T_ENV energy_ramp_start = 1000000, energy_ramp_end = 3000000;
     T_ENV simple_constant = defaults.simple_constant;
@@ -844,24 +704,17 @@ int run(int argc, char** argv){
     T_ENV randomization_mass = disturbed ? T_ENV(0.1) : 0, randomization_thrust = disturbed ? T_ENV(0.15) : 0;
     T_ENV randomization_aerodynamics = disturbed ? T_ENV(0.1) : 0;
     int latency_max = disturbed ? 2 : -1;
-    // (the check of the value is after the options)
-    bool profile = false;
     for(int i = 5; i < argc; i++){
         std::string option = argv[i];
         if(option == "--alpha-weight" && i + 1 < argc) alpha_weight = std::stod(argv[++i]);
         else if(option == "--position-scale" && i + 1 < argc) position_scale = std::stod(argv[++i]);
         else if(option == "--position-linear" && i + 1 < argc) position_linear = std::stod(argv[++i]);
         else if(option == "--velocity-guidance" && i + 1 < argc) guidance = std::stod(argv[++i]);
-        else if(option == "--reference-bearing-max" && i + 1 < argc) bearing_max_deg = std::stod(argv[++i]);
-        else if(option == "--fine-position-scale" && i + 1 < argc) fine_scale = std::stod(argv[++i]);
         else if(option == "--checkpoint-precise" && i + 2 < argc){ precise_min_success = std::stod(argv[++i]); precise_after = std::stoul(argv[++i]); }
         else if(option == "--near-start" && i + 2 < argc){ near_fraction = std::stod(argv[++i]); near_offset = std::stod(argv[++i]); }
-        else if(option == "--huber" && i + 1 < argc) huber_delta = std::stod(argv[++i]);
         else if(option == "--start" && i + 1 < argc) start_name = argv[++i];
-        else if(option == "--curriculum-stage" && i + 1 < argc) fixed_stage = std::stoi(argv[++i]);
         else if(option == "--curriculum-period" && i + 1 < argc) curriculum_period = std::stoul(argv[++i]);
         else if(option == "--checkpoint-interval" && i + 1 < argc) checkpoint_interval = std::stoul(argv[++i]);
-        else if(option == "--action-change-scale" && i + 1 < argc) action_change_scale = std::stod(argv[++i]);
         else if(option == "--reward" && i + 1 < argc) reward_form = argv[++i];
         else if(option == "--energy-weight" && i + 1 < argc) energy_weight = std::stod(argv[++i]);
         else if(option == "--energy-ramp" && i + 2 < argc){ energy_ramp_start = std::stod(argv[++i]); energy_ramp_end = std::stod(argv[++i]); }
@@ -875,12 +728,8 @@ int run(int argc, char** argv){
         else if(option == "--gust-rate" && i + 1 < argc) gust_rate = std::stod(argv[++i]);
         else if(option == "--thermal-fraction" && i + 1 < argc) thermal_fraction = std::stod(argv[++i]);
         else if(option == "--turn-fraction" && i + 1 < argc) turn_fraction = std::stod(argv[++i]);
-        else if(option == "--position-l1" && i + 1 < argc) position_l1 = std::stod(argv[++i]);
         else if(option == "--position-bonus" && i + 1 < argc) position_bonus = std::stod(argv[++i]);
-        else if(option == "--position-bonus-adaptive" && i + 1 < argc) bonus_adaptive = std::stod(argv[++i]);
-        else if(option == "--position-bonus-scale" && i + 2 < argc){ bonus_scale0 = std::stod(argv[++i]); bonus_scale_min = std::stod(argv[++i]); }
         else if(option == "--no-trim-reward") trim_reward = false;
-        else if(option == "--profile") profile = true;
         else throw std::runtime_error("unknown option " + option);
     }
     // the lowest reward of a flying step: survival - capped cost - far terms - position terms; it must stay >= 0,
@@ -891,14 +740,10 @@ int run(int argc, char** argv){
     const std::map<std::string, fixed_wing::StartMode> start_modes = {
         {"trimmed", fixed_wing::TRIMMED}, {"neutral", fixed_wing::NEUTRAL}, {"random", fixed_wing::RANDOM}};
     if(!start_modes.count(start_name)) throw std::runtime_error("unknown start " + start_name);
-    constexpr TI N_ENVIRONMENTS = LOOP_CORE_PARAMETERS::N_ENVIRONMENTS;
-    if(steps % N_ENVIRONMENTS != 0) throw std::runtime_error("steps must be a multiple of the number of airplanes");
     if(curriculum_period == 0 || curriculum_period % 10000 != 0) throw std::runtime_error("--curriculum-period must be a positive multiple of 10000");
-    if(checkpoint_interval % N_ENVIRONMENTS != 0) throw std::runtime_error("--checkpoint-interval must be a multiple of the number of airplanes");
-    if(FW_TD3 && profile) throw std::runtime_error("--profile follows the SAC step only");
-    if(reward_form != "tanh" && reward_form != "l2f" && reward_form != "l2f-penalty" && reward_form != "l2f-norm" && reward_form != "simple") throw std::runtime_error("--reward must be tanh, l2f, l2f-penalty, l2f-norm or simple");
+    if(reward_form != "tanh" && reward_form != "l2f-norm" && reward_form != "simple") throw std::runtime_error("--reward must be tanh, l2f-norm or simple");
     const bool simple = reward_form == "simple";
-    if(simple && !FW_TRACKING) throw std::runtime_error("--reward simple is for the tracking task");
+    if(reward_form != "tanh" && !FW_TRACKING) throw std::runtime_error("--reward l2f-norm and simple are for the tracking task");
     if(!simple && (energy_weight != 0 || simple_constant != defaults.simple_constant)) throw std::runtime_error("--energy-weight and --simple-constant need --reward simple");
     if(energy_weight < 0 || energy_ramp_start < 0 || energy_ramp_end < energy_ramp_start) throw std::runtime_error("--energy-weight needs W >= 0, --energy-ramp 0 <= START <= END");
     if(distance_max < 0 || heading_max_deg < 0 || heading_max_deg > 180) throw std::runtime_error("--distance-max needs D >= 0, --reference-heading-max 0 <= DEG <= 180");
@@ -906,32 +751,24 @@ int run(int argc, char** argv){
     if(wind_max < 0 || turbulence_max < 0 || gust_rate < 0 || thermal_fraction < 0 || thermal_fraction > 1 || turn_fraction < 0 || turn_fraction > 1) throw std::runtime_error("disturbance options out of range");
     if(!FW_DISTURBANCES && (turbulence_max > 0 || gust_rate > 0 || thermal_fraction > 0)) throw std::runtime_error("--turbulence-max, --gust-rate and --thermal-fraction need a train_sac_*_wind target");
     if(turn_fraction > 0 && !FW_TRACKING) throw std::runtime_error("--turn-fraction is for the tracking task");
-    if(position_l1 != 0 && reward_form == "tanh") throw std::runtime_error("--position-l1 needs --reward l2f or l2f-penalty");
     if(precise_min_success < 0 || precise_min_success > 1) throw std::runtime_error("--checkpoint-precise needs 0 <= P <= 1");
     if(precise_min_success > 0 && checkpoint_interval == 0) throw std::runtime_error("--checkpoint-precise needs --checkpoint-interval");
-    if(fine_scale <= 0) throw std::runtime_error("--fine-position-scale must be positive");
-    if(fine_scale != 2 && !FW_FINE_POSITION) throw std::runtime_error("--fine-position-scale needs a train_sac_*_fine target");
     if(near_fraction < 0 || near_fraction > 1 || near_offset <= 0) throw std::runtime_error("--near-start needs 0 <= F <= 1 and D > 0");
-    if(position_bonus != 0 && reward_form == "tanh") throw std::runtime_error("--position-bonus needs --reward l2f or l2f-penalty");
-    std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"algorithm\": \""
-        << (FW_TD3 ? "td3" : "sac") << "\",\n  \"steps\": " << steps
+    if(position_bonus != 0 && reward_form != "l2f-norm") throw std::runtime_error("--position-bonus needs --reward l2f-norm");
+    std::ofstream(out_dir / "config.json") << "{\n  \"seed\": " << seed << ",\n  \"algorithm\": \"sac\",\n  \"steps\": " << steps
         << ",\n  \"critic_hidden\": " << FW_CRITIC_HIDDEN << ",\n  \"batch\": " << FW_BATCH << ",\n  \"gamma\": " << FW_GAMMA
         << ",\n  \"alpha_margin_weight\": " << alpha_weight << ",\n  \"start\": \"" << start_name
-        << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false") << ",\n  \"huber_delta\": " << huber_delta
-        << ",\n  \"error_integral\": " << (FW_ERROR_INTEGRAL ? "true" : "false")
-        << ",\n  \"fine_position_scale\": " << (FW_FINE_POSITION ? fine_scale : 0)
+        << "\",\n  \"trim_reward\": " << (trim_reward ? "true" : "false")
+        << ",\n  \"fine_position_scale\": " << (FW_FINE_POSITION ? fixed_wing::TaskConfig<T_ENV>{}.fine_position_scale : 0)
         << ",\n  \"task\": \"" << (FW_TRACKING ? "tracking" : "course") << "\",\n  \"airplane\": \""
         << (FW_AIRPLANE == 1 ? "px4_advanced_plane" : FW_AIRPLANE == 2 ? "eratix" : "aerosonde") << "\",\n  \"position_scale\": " << position_scale
         << ",\n  \"position_linear_weight\": " << position_linear << ",\n  \"velocity_guidance_gain\": " << guidance
-        << ",\n  \"reference_bearing_max_deg\": " << bearing_max_deg << ",\n  \"n_environments\": " << N_ENVIRONMENTS
         << ",\n  \"training_interval\": " << FW_TRAINING_INTERVAL
         << ",\n  \"actor_training_interval\": " << FW_TRAINING_INTERVAL * FW_ACTOR_INTERVAL_FACTOR
-        << ",\n  \"action_change_scale\": " << action_change_scale << ",\n  \"reward\": \"" << reward_form << "\"" << ",\n  \"position_l1_weight\": " << position_l1 << ",\n  \"position_bonus_weight\": " << position_bonus << ",\n  \"position_bonus_scale\": [" << bonus_scale0 << ", " << bonus_scale_min << "]" << ",\n  \"position_bonus_adaptive\": " << bonus_adaptive
+        << ",\n  \"reward\": \"" << reward_form << "\",\n  \"position_bonus_weight\": " << position_bonus
         << ",\n  \"near_start_fraction\": " << near_fraction << ",\n  \"near_start_offset\": " << near_offset
-        << ",\n  \"exploration_noise\": " << (FW_TD3 ? FW_EXPLORATION_NOISE : 0)
-        << ",\n  \"curriculum_stage\": " << fixed_stage << ",\n  \"curriculum_period\": " << curriculum_period
-        << ",\n  \"checkpoint_interval\": " << checkpoint_interval
-        << ",\n  \"checkpoint_precise\": [" << precise_min_success << ", " << precise_after << "],\n  \"profile\": " << (profile ? "true" : "false")
+        << ",\n  \"curriculum_period\": " << curriculum_period << ",\n  \"checkpoint_interval\": " << checkpoint_interval
+        << ",\n  \"checkpoint_precise\": [" << precise_min_success << ", " << precise_after << "]"
         << ",\n  \"energy_weight\": " << energy_weight << ",\n  \"energy_ramp\": [" << energy_ramp_start << ", " << energy_ramp_end << "]"
         << ",\n  \"simple_constant\": " << simple_constant << ",\n  \"distance_max\": " << distance_max
         << ",\n  \"reference_heading_max_deg\": " << heading_max_deg << ",\n  \"eval_duration\": " << eval_duration
@@ -950,10 +787,6 @@ int run(int argc, char** argv){
     curriculum.period = curriculum_period;
     curriculum.initial.alpha_margin_weight = alpha_weight;  // constant: not part of the curriculum
     curriculum.target.alpha_margin_weight = alpha_weight;
-    curriculum.initial.action_change_weight *= action_change_scale;
-    curriculum.target.action_change_weight *= action_change_scale;
-    curriculum.initial.huber_delta = huber_delta;
-    curriculum.target.huber_delta = huber_delta;
     for(auto* c: {&curriculum.initial, &curriculum.target}){  // tracking task: constant over the curriculum
         c->position_scale = position_scale;
         c->position_linear_weight = position_linear;
@@ -975,27 +808,18 @@ int run(int argc, char** argv){
         curriculum.initial.simple_constant = simple_constant;
         curriculum.initial.energy_weight = energy_weight_at(0);
     }
-    if(reward_form != "tanh" && !simple){
+    if(reward_form == "l2f-norm"){
         // the L2F reward form and schedule (RewardConfig::l2f_form, Curriculum::l2f); the tracking scales
         // (--position-scale, velocity_scale), the velocity guidance and the stall margin stay as given
-        if(!FW_TRACKING) throw std::runtime_error("--reward l2f is for the tracking task");
         curriculum.l2f = true;
-        curriculum.bonus_scale0 = bonus_scale0;
-        curriculum.bonus_scale_min = bonus_scale_min;
-        curriculum.bonus_adaptive = bonus_adaptive;
-        curriculum.bonus_scale = bonus_scale0;
         curriculum.n_stages = 20;  // the caps are reached after 12 (position) and 7 (velocity, commands) stages
         for(auto* c: {&curriculum.initial, &curriculum.target}){
             c->l2f_form = true;
-            c->position_l1_weight = position_l1;  // constant over the curriculum
-            c->position_bonus_weight = position_bonus;
+            c->position_bonus_weight = position_bonus;  // constant over the curriculum
             c->sideslip_weight = T_ENV(0.3);  // constant: L2F has no sideslip term, an airplane needs one
-            c->l2f_norms = reward_form == "l2f-norm";
-            if(reward_form == "l2f-penalty" || reward_form == "l2f-norm"){
-                c->l2f_floor = -c->l2f_survival;
-                // ending a flight is never better than staying at the floor for the rest of it
-                c->l2f_termination_penalty = c->l2f_survival / (1 - T_ENV(FW_GAMMA));
-            }
+            c->l2f_floor = -c->l2f_survival;
+            // ending a flight is never better than staying at the floor for the rest of it
+            c->l2f_termination_penalty = c->l2f_survival / (1 - T_ENV(FW_GAMMA));
         }
     }
     for(int s = 0; s <= curriculum.n_stages; s++){
@@ -1005,32 +829,24 @@ int run(int argc, char** argv){
             if(!std::isfinite(w)) throw std::runtime_error("reward weight not finite at curriculum stage " + std::to_string(s));
         }
     }
-    if(fixed_stage > curriculum.n_stages) throw std::runtime_error("--curriculum-stage above the last stage");
-    int stage = std::max(fixed_stage, 0);
-    auto set_reward = [&](const fixed_wing::RewardConfig<T_ENV>& c){
-        for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++) rlt::get(ts.off_policy_runner.envs, 0, i).config.reward = c;
-    };
-    for(TI i = 0; i < LOOP_CORE_PARAMETERS::N_ENVIRONMENTS; i++){
-        auto& config = rlt::get(ts.off_policy_runner.envs, 0, i).config;
-        config.start = start_modes.at(start_name);
-        config.reference_bearing_max = std::min(bearing_max_deg, T_ENV(180)) * fixed_wing::PI / 180;
-        config.reference_near_fraction = near_fraction;
-        config.reference_near_offset_max = near_offset;
-        config.fine_position_scale = fine_scale;
-        config.course_change_max = heading_max_deg * fixed_wing::PI / 180;
-        config.reference_distance_max = distance_max;
-        config.wind_speed_max = wind_max;
-        config.turbulence_intensity_max = turbulence_max;
-        config.gust_rate = gust_rate;
-        config.thermal_fraction = thermal_fraction;
-        config.reference_turn_fraction = turn_fraction;
-        config.randomization_mass = randomization_mass;
-        config.randomization_thrust = randomization_thrust;
-        config.randomization_aerodynamics = randomization_aerodynamics;
-        config.latency_steps_random_max = latency_max;
-    }
-    set_reward(curriculum.at_stage(stage));
-    const fixed_wing::TaskConfig<T_ENV> training_config = rlt::get(ts.off_policy_runner.envs, 0, 0).config;
+    int stage = 0;
+    auto& config = rlt::get(ts.off_policy_runner.envs, 0, 0).config;
+    config.start = start_modes.at(start_name);
+    config.reference_near_fraction = near_fraction;
+    config.reference_near_offset_max = near_offset;
+    config.course_change_max = heading_max_deg * fixed_wing::PI / 180;
+    config.reference_distance_max = distance_max;
+    config.wind_speed_max = wind_max;
+    config.turbulence_intensity_max = turbulence_max;
+    config.gust_rate = gust_rate;
+    config.thermal_fraction = thermal_fraction;
+    config.reference_turn_fraction = turn_fraction;
+    config.randomization_mass = randomization_mass;
+    config.randomization_thrust = randomization_thrust;
+    config.randomization_aerodynamics = randomization_aerodynamics;
+    config.latency_steps_random_max = latency_max;
+    config.reward = curriculum.at_stage(stage);
+    const fixed_wing::TaskConfig<T_ENV> training_config = config;
 
     std::ofstream progress(out_dir / "progress.csv");
     progress << "time/total_timesteps,rollout/ep_len_mean,rollout/ep_rew_mean,"
@@ -1039,7 +855,6 @@ int run(int argc, char** argv){
     auto start = std::chrono::steady_clock::now();
     auto& runner = ts.off_policy_runner;
     TI next_check = curriculum.period;
-    Profile timing;
     // best checkpoint on the validation flights (--checkpoint-interval)
     using ACTOR = std::remove_cv_t<std::remove_reference_t<decltype(rlt::get_actor(ts))>>;
     ACTOR best_actor;
@@ -1058,14 +873,8 @@ int run(int argc, char** argv){
         checkpoints.open(out_dir / "checkpoints.csv");
         checkpoints << "step,success_rate," << (FW_TRACKING ? "position_rmse" : "course_rmse_deg") << ",score\n";
     }
-    // step counts airplane steps: one loop step flies all the airplanes
-    for(TI step = N_ENVIRONMENTS; step <= steps; step += N_ENVIRONMENTS){
-#if FW_TD3
+    for(TI step = 1; step <= steps; step++){
         rlt::step(device, ts);
-#else
-        if(profile) profiled_step(device, ts, timing);
-        else rlt::step(device, ts);
-#endif
         if(step % 10000 == 0){
             Window w = window(runner, 50000);
             double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -1085,14 +894,13 @@ int run(int argc, char** argv){
             std::cout << "reward recomputation check: " << error << std::endl;
         }
         if(step >= next_check){
-            // a stage is taken only if the setpoint was tracked over the last period
+            // a stage is taken only if the setpoint was tracked over the last period (l2f-norm: unconditionally)
             bool changed = false;
-            if(fixed_stage < 0 && (curriculum.l2f || window(runner, curriculum.period).task_error < curriculum.advance_error)
-               && stage < curriculum.n_stages){
+            if((curriculum.l2f || window(runner, curriculum.period).task_error < curriculum.advance_error) && stage < curriculum.n_stages){
                 stage++;
                 changed = true;
             }
-            if(curriculum.l2f && curriculum.bonus_adaptive > 0){
+            if(curriculum.l2f && position_bonus > 0){
                 T_ENV scale = std::fmax(std::fmin(curriculum.bonus_scale,
                                                   curriculum.bonus_adaptive * T_ENV(window(runner, curriculum.period).task_error)),
                                         curriculum.bonus_scale_min);
@@ -1107,7 +915,7 @@ int run(int argc, char** argv){
                 }
             }
             if(changed){
-                set_reward(curriculum.at_stage(stage));
+                config.reward = curriculum.at_stage(stage);
                 recompute_rewards(device, runner, curriculum.at_stage(stage));
             }
             next_check += curriculum.period;
@@ -1136,21 +944,6 @@ int run(int argc, char** argv){
         }
     }
     double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    if(profile){
-        // microseconds per call of each part (an update part is called once per loop step after the warmup), and the
-        // whole loop per loop step, logging and curriculum included
-        double loop_steps = double(steps / N_ENVIRONMENTS);
-        std::ofstream json(out_dir / "profile.json");
-        json << "{\n  \"loop_steps\": " << loop_steps << ",\n  \"total_us_per_step\": " << seconds / loop_steps * 1e6;
-        std::cout << "microseconds per call:";
-        for(int i = 0; i < Profile::N; i++){
-            double us = timing.calls[i] > 0 ? timing.seconds[i] / timing.calls[i] * 1e6 : 0;
-            json << ",\n  \"" << Profile::names[i] << "_us\": " << us << ",\n  \"" << Profile::names[i] << "_calls\": " << timing.calls[i];
-            std::cout << "  " << Profile::names[i] << " " << us;
-        }
-        json << "\n}\n";
-        std::cout << "  (whole loop " << seconds / loop_steps * 1e6 << " per step)" << std::endl;
-    }
     // test A: the Python scenarios, or for tracking normal flights (neutral start); test B: random starts
     std::vector<ENVIRONMENT::State> test_a;
     if constexpr(!FW_DISTURBANCES) test_a = FW_TRACKING ? sampled_starts(device, 12345, fixed_wing::NEUTRAL) : start_states(scenarios);
