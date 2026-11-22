@@ -76,6 +76,8 @@ fw_executable(evaluate_reference_fine src/evaluate_reference.cpp FW_TRACKING=1 F
 target_link_libraries(evaluate_reference PRIVATE Threads::Threads)
 target_link_libraries(evaluate_reference_fine PRIVATE Threads::Threads)
 
+fw_executable(evaluate_smoothness src/evaluate_smoothness.cpp FW_TRACKING=1 FW_AIRPLANE=1 FW_FINE_POSITION=1 FW_DISTURBANCES=1)
+
 list(REMOVE_ITEM FW_TARGETS check check_wind)
 if(NOT MSVC)
     foreach(target ${FW_TARGETS})

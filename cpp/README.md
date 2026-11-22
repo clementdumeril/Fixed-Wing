@@ -106,6 +106,7 @@ wind models (`src/check_wind.cpp`, see above). Results of every recipe: [`result
 | `train_sac_c128_b256_tracking_g995_eratix_i10a20` | following a moving point on the lab's E-flite UMX Eratix, without the fine observation (62 inputs) (archived results) | `slurm/tracking_eratix.slurm` |
 | `check`, `check_wind` | the C++ port against the Python environment and wind models | `slurm/build.slurm` |
 | `evaluate_reference`, `evaluate_reference_fine` | an `advanced_plane` tracking actor when the point accelerates (62 or 65 inputs) | |
+| `evaluate_smoothness` | a `_wind` actor on the 100 disturbed and 100 calm test flights, with attitude, body rates, command rates, airspeed and along/cross-track errors | `slurm/tracking_px4plane_smooth.slurm` |
 | `compare_sitl` | a PX4 SITL flight of the deployed policy against this simulator | |
 | `eratix_trim` | trim table, stall speed, linear modes and a hands-off flight of the Eratix model | |
 
@@ -156,6 +157,8 @@ Options after the step count:
 - `--energy-weight W`, `--energy-ramp START END`, `--simple-constant C`, `--eval-duration S`, `--calm`, `--wind-max V`,
   `--turbulence-max K`, `--gust-rate R`, `--thermal-fraction F`, `--turn-fraction F`: the simple reward and the
   disturbances, below.
+- `--action-weight W`, `--rate-weight W`, `--velocity-weight W`, `--smooth-ramp START END`,
+  `--reference-air-relative`: smoother flight with the simple reward, below.
 
 The tracking task exists in C++ only. A reference point starts up to 50 m from the airplane and flies straight within
 90° of the airplane's heading, climbing or descending at up to 1 m/s; the airplane has to reach it and follow it. The
@@ -170,11 +173,38 @@ From `Fixed-Wing/cpp`, with the Python venv of [`python/slurm`](../python/slurm/
 source slurm/setup.sh          # login node: modules, Intel MKL in the venv, configure (downloads RLtools)
 sbatch slurm/build.slurm       # compute node: compile, export the test scenarios, check against Python
 sbatch slurm/tracking_px4plane_simple.slurm   # main: the simple reward in wind and thermals, energy weights 0, 0.1, 0.3, 8M steps, 4 seeds each
+sbatch slurm/tracking_px4plane_smooth.slurm   # next: the same with the smoothness terms and the air-relative point, 6 variants, 8M steps, 4 seeds each
 sbatch slurm/tracking_px4plane_reward.slurm   # archive: the precision recipe on the advanced_plane, calm air, 4M steps, 10 seeds
 sbatch slurm/tracking_eratix.slurm            # archive: the Eratix model, tanh reward, calm air, 4M steps, 10 seeds
 ```
 
 Each run writes `runs/<name>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
+
+## Smoother flight
+
+The policies of job 41645214 complete their flights, but their commands chatter and their bank swings by tens of
+degrees, in calm air as much as in turbulence (`evaluate_smoothness`). Four options of `--reward simple`, each off by
+default (the defaults give the same runs, byte for byte):
+
+$$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + w_a \lVert a_t - a_{t-1} \rVert + w_\omega \lVert \omega \rVert + w_v \lVert v - v_{\text{ref}} \rVert + w_E \left( T / T_{\max} \right)^{3/2} \right)$$
+
+- `--action-weight W`: $w_a$ (default 1), the weight of the command change;
+- `--rate-weight W`: $w_\omega$ (default 0), on the norm of the body rates in rad/s;
+- `--velocity-weight W`: $w_v$ (default 0), on the error to the velocity of the point in m/s;
+- `--smooth-ramp START END`: the three weights go linearly from their defaults (1, 0, 0) to the given values between
+  the two steps, updated at every curriculum check with the stored rewards recomputed (as `--energy-ramp`); without
+  it they apply from the first step;
+- `--reference-air-relative`: the point flies at its speed relative to the mean wind and drifts with it (straight
+  lines and helices alike, `ReferenceMotion::drift`). By default the point moves relative to the ground, so in wind
+  the airplane must change its airspeed by up to twice the wind speed on every circle of a helix.
+
+`evaluate_smoothness <best_actor.h> <out_prefix> [--reference-air-relative]` flies an actor of the `_wind` target on
+the test flights of `slurm/tracking_px4plane_simple.slurm` (seed 12345, 120 s) and writes `<out_prefix>.json` (means
+over the completed flights: all flights, helices, straight lines, with and without thermals) and
+`<out_prefix>_flights.csv` (one row per flight). `slurm/tracking_px4plane_smooth.slurm` trains six variants (base,
+$w_a = 10$, $w_\omega = 2$ ramped from 1M to 3M steps, $w_v = 0.5$, the air-relative point, and $w_a = 10$ with
+$w_\omega = 2$ and the air-relative point), 4 seeds each, and runs `evaluate_smoothness` on each best actor, on both
+the ground-fixed and the air-relative point.
 
 ## PX4's advanced_plane and flying the policy in Gazebo
 

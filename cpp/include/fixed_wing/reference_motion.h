@@ -104,6 +104,12 @@ namespace fixed_wing{
             acceleration[0] = 0;
             acceleration[1] = 0;
         }
+        if(m.drift[0] != 0 || m.drift[1] != 0 || m.drift[2] != 0){
+            for(int i = 0; i < 3; i++){
+                position[i] += m.drift[i] * t;
+                velocity[i] += m.drift[i];
+            }
+        }
     }
 
     template <typename T>

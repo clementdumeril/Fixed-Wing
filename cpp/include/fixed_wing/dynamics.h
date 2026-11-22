@@ -993,6 +993,7 @@ namespace fixed_wing{
     }
 
     constexpr int CRITIC_ACTUATORS_OFFSET = 6;
+    constexpr int ACTOR_RATES_OFFSET = N_TASK_ERRORS + 9;
 
     template <typename T>
     T rotor_speed_fraction(T throttle){
@@ -1018,11 +1019,14 @@ namespace fixed_wing{
     }
 
     template <typename T>
-    T simple_reward(T distance, const T action_change[N_ACTUATORS], T thrust_ratio, const RewardConfig<T>& c){
+    T simple_reward(T distance, const T action_change[N_ACTUATORS], T thrust_ratio, T rate, T velocity_error, const RewardConfig<T>& c){
         T change = 0;
         for(int i = 0; i < N_ACTUATORS; i++) change += action_change[i] * action_change[i];
         T energy = std::pow(std::fmax(thrust_ratio, T(0)), T(1.5));
-        return c.simple_constant - (distance + std::sqrt(change) + c.energy_weight * energy);
+        T cost = distance + c.simple_action_weight * std::sqrt(change) + c.energy_weight * energy;
+        if(c.simple_rate_weight != 0) cost += c.simple_rate_weight * rate;
+        if(c.simple_velocity_weight != 0) cost += c.simple_velocity_weight * velocity_error;
+        return c.simple_constant - cost;
     }
 
     template <typename T>
@@ -1133,7 +1137,8 @@ namespace fixed_wing{
             T e_position[3], e_velocity[3], change[N_ACTUATORS];
             tracking_errors(next, e_position, e_velocity);
             for(int i = 0; i < N_ACTUATORS; i++) change[i] = clip(action[i], T(-1), T(1)) - state.action_history[ACTION_HISTORY - 1][i];
-            return simple_reward(norm3(e_position), change, thrust_fraction(next.body.actuators[THROTTLE]), config.reward);
+            return simple_reward(norm3(e_position), change, thrust_fraction(next.body.actuators[THROTTLE]),
+                                 norm3(next.body.angular_velocity), norm3(e_velocity), config.reward);
         }
         if(termination(p, next, config) != FLYING) return config.reward.l2f_form ? -config.reward.l2f_termination_penalty : 0;
         AirData<T> air = air_data(p, next.body);
@@ -1178,7 +1183,12 @@ namespace fixed_wing{
             T change[N_ACTUATORS];
             for(int i = 0; i < N_ACTUATORS; i++) change[i] = action[i] - observation[n - N_ACTUATORS + i];
             T throttle = (next_observation[n + CRITIC_ACTUATORS_OFFSET + THROTTLE] + 1) / 2;
-            return simple_reward(norm3(position), change, thrust_fraction(throttle), c);
+            T rates[3], velocity[3];
+            for(int i = 0; i < 3; i++){
+                rates[i] = next_observation[ACTOR_RATES_OFFSET + i] * T(PI);
+                velocity[i] = next_observation[3 + i] * 5;
+            }
+            return simple_reward(norm3(position), change, thrust_fraction(throttle), norm3(rates), norm3(velocity), c);
         }
         if(terminated) return c.l2f_form ? -c.l2f_termination_penalty : 0;
         T alpha = next_observation[n] * T(0.3);

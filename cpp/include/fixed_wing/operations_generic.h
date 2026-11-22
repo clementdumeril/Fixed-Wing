@@ -216,6 +216,12 @@ namespace rl_tools{
                     s.reference_acceleration[i] = acceleration[i];
                 }
             }
+            if(c.reference_air_relative){
+                for(int i = 0; i < 2; i++){
+                    motion.drift[i] = p.wind[i];
+                    s.reference_velocity[i] += p.wind[i];
+                }
+            }
             if(p.thermals.count > 0){
                 T position[3], velocity[3], acceleration[3];
                 fixed_wing::reference_at(motion, duration / 2, position, velocity, acceleration);

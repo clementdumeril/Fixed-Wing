@@ -88,6 +88,7 @@ namespace fixed_wing{
         T turn = 1;  // +1 turns left (counterclockwise seen from above), -1 right; oscillation: +1 speeds up first
         T acceleration = 0;  // m/s^2: centripetal (circle, helix), peak lateral (eight), peak along the path (oscillation)
         T phase = 0;  // figure-eight: where on the figure the point starts (0: the crossing, at its highest speed)
+        T drift[3] = {0, 0, 0};
         T speed_mid = 15, speed_amplitude = 3;  // oscillation: m/s, the speed stays within mid +- amplitude
     };
 
@@ -231,6 +232,9 @@ namespace fixed_wing{
         T simple_constant = 35;
         T simple_termination_penalty = 100;
         T energy_weight = 0;
+        T simple_action_weight = 1;
+        T simple_rate_weight = 0;
+        T simple_velocity_weight = 0;
     };
 
     // how an episode starts (sample_initial_state)
@@ -340,6 +344,7 @@ namespace fixed_wing{
         T reference_distance_max = 0;
         T reference_turn_fraction = 0;
         T reference_turn_bank_range[2] = {T(0.08726646259971647), T(0.5235987755982988)};
+        bool reference_air_relative = false;
         int latency_steps_random_max = -1;
         T randomization_mass = 0;
         T randomization_thrust = 0;
