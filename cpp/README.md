@@ -107,6 +107,7 @@ wind models (`src/check_wind.cpp`, see above). Results of every recipe: [`result
 | `check`, `check_wind` | the C++ port against the Python environment and wind models | `slurm/build.slurm` |
 | `evaluate_reference`, `evaluate_reference_fine` | an `advanced_plane` tracking actor when the point accelerates (62 or 65 inputs) | |
 | `evaluate_smoothness` | a `_wind` actor on the 100 disturbed and 100 calm test flights, with attitude, body rates, command rates, airspeed and along/cross-track errors | `slurm/tracking_px4plane_smooth.slurm` |
+| `evaluate_limits` | a `_wind` actor under scripted events past the training range: motor cut and restart, wind, gusts, turbulence, thermals, mass, thrust, control power, latency, sensor noise, point jumps ([results](../docs/limit_tests/README.md)) | |
 | `compare_sitl` | a PX4 SITL flight of the deployed policy against this simulator | |
 | `eratix_trim` | trim table, stall speed, linear modes and a hands-off flight of the Eratix model | |
 

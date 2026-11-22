@@ -75,6 +75,25 @@ checkpoint: the step of the lowest score in `checkpoints.csv`.
 flight. Top: wind, turbulence and thermals, the point on a wide circle. Bottom: strong turbulence, the point on a
 helix. Both flights are completed. The videos are not committed.*
 
+## Limits of the best policy
+
+[`limit_tests/`](limit_tests/README.md) pushes the energy 0, seed 1 policy past its training range, one change at a
+time, 50 flights per level, in our simulator:
+
+| test | trained on | still fine | breaks at |
+| --- | --- | --- | --- |
+| motor cut, then restart | never | 5 s (100 %, 8 m of altitude lost) | 10 s (68 %), 0 % from 30 s |
+| headwind / crosswind / tailwind | 0-6 m/s | 10 / 10 / 2 m/s | 12 / 12 / 4 m/s |
+| Dryden turbulence | up to 1 x moderate | 1 x (92 %) | 1.5 x (66 %) |
+| thermal core | up to 3 m/s | 5 m/s | 6 m/s |
+| latency | 0-40 ms | 80 ms | 100 ms (pitch limit cycle) |
+| thrust | +-15 % | 0.18 x | 0.12 x |
+| point jump | never | 20 m | 30 m |
+
+The glide itself is clean (13-14 m/s, glide ratio 16-20). Longer cuts fail because the policy pulls up to hold
+altitude and stalls, a state it never saw in training. The wind limits come from the allowed airspeed range
+(7-30 m/s): when the task needs 10-28 m/s of airspeed, 98-100 % of the flights complete.
+
 ## Not tested yet
 
 - These policies are not flown in PX4 SITL / Gazebo nor on a real airplane. The ROS 2 node of `cpp/deploy` is built

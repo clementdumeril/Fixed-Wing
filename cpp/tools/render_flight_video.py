@@ -1,12 +1,15 @@
 """3D animation of recorded tracking flights (the flights/*.csv of evaluate_reference, or flights*.csv of train_sac).
 
 python tools/render_flight_video.py <flights.csv> <out.gif|out.mp4> [--flight F] [--title TEXT] [--speed X] [--fps N] [--dpi N]
+    [--event-label TEXT]
 
 Left: the airplane (drawn 6 times larger than its span so that its attitude reads) and its trail, the point and its
 whole path, at true scale on all three axes. Right: the distance to the point and the airspeed against time. The
 airplane is placed from x, y, altitude and oriented from roll, pitch and heading. --speed: playback
 speed (default 2, real time 1); --fps: frames per second (default 20). A .gif needs only Pillow; .mp4 needs ffmpeg (on the PATH, or
-pip install imageio-ffmpeg).
+pip install imageio-ffmpeg). With the flights/*.csv of evaluate_limits, the times when the column "event" is 1 (motor off,
+gust, ...) are shaded on the plots and named by --event-label, and a stop the real termination rules would have made
+(column "strict_termination") is marked.
 """
 import csv
 import math
@@ -50,13 +53,15 @@ def rotation(roll, pitch, yaw):
 def load(path, flight):
     rows = [r for r in csv.DictReader(open(path)) if r["flight"] == str(flight)]
     f = lambda k: np.array([float(r[k]) for r in rows])
-    return {k: f(k) for k in ("t", "x", "y", "altitude", "roll_deg", "pitch_deg", "heading_deg", "airspeed",
-                                "reference_x", "reference_y", "reference_altitude")}, rows[-1]["termination"]
+    keys = ["t", "x", "y", "altitude", "roll_deg", "pitch_deg", "heading_deg", "airspeed", "reference_x", "reference_y",
+            "reference_altitude"]
+    keys += [k for k in ("event", "strict_termination", "alpha_deg") if k in rows[0]]
+    return {k: f(k) for k in keys}, rows[-1]["termination"]
 
 
 def main():
     args = sys.argv[1:]
-    opts = {"--flight": "0", "--title": "", "--speed": "2", "--fps": "20", "--dpi": "100"}
+    opts = {"--flight": "0", "--title": "", "--speed": "2", "--fps": "20", "--dpi": "100", "--event-label": "event"}
     for k in list(opts):
         if k in args:
             i = args.index(k)
@@ -120,15 +125,36 @@ def main():
         a.grid(True, color=GRID, linewidth=0.8)
         for side in ("top", "right"):
             a.spines[side].set_visible(False)
+    event = d.get("event", np.zeros_like(d["t"])) > 0
+    spans, start = [], None
+    for t, on in zip(d["t"], event):
+        if on and start is None:
+            start = t
+        if not on and start is not None:
+            spans.append((start, t))
+            start = None
+    if start is not None:
+        spans.append((start, d["t"][-1]))
+    for a, b in spans:
+        for axis in (e_ax, s_ax):
+            axis.axvspan(a, b, color=GRID, alpha=0.9, linewidth=0)
+        e_ax.text((a + b) / 2, e_ax.get_ylim()[1] * 0.97, opts["--event-label"], ha="center", va="top", fontsize=8, color=MUTED)
+    strict = d.get("strict_termination", np.zeros_like(d["t"]))
+    if (strict > 0).any():
+        t_strict = d["t"][np.argmax(strict > 0)]
+        for axis in (e_ax, s_ax):
+            axis.axvline(t_strict, color="#e34948", linewidth=0.9, linestyle=(0, (2, 2)))
     cursors = [a.axvline(0, color=MUTED, linewidth=0.8) for a in (e_ax, s_ax)]
     fig.text(0.02, 0.95, opts["--title"], fontsize=12)
-    info = fig.text(0.02, 0.9, "", fontsize=10, color=MUTED)
+    info = fig.text(0.02, 0.905, "", fontsize=10, color=MUTED)
     second_half = d["t"] >= d["t"][-1] / 2
     rmse = math.sqrt((error[second_half] ** 2).mean())
     end = REASONS.get(termination, "ends: " + termination)
     summary = (f"flight ended at {d['t'][-1]:.1f} s: {end}" if termination != "0" else
                f"completed, RMSE second half {rmse:.1f} m")
-    fig.text(0.985, 0.92, summary, fontsize=10, color=MUTED, ha="right")
+    if (strict > 0).any():
+        summary += f"; real rules stop it at {t_strict:.1f} s ({REASONS.get(str(int(strict[strict > 0][0])), '?')})"
+    fig.text(0.02, 0.86, summary, fontsize=9, color=MUTED)
 
     def draw(i):
         trail.set_data_3d(plane[:i + 1, 0], plane[:i + 1, 1], plane[:i + 1, 2])
@@ -143,8 +169,11 @@ def main():
         mesh.set_verts(polys)
         for c in cursors:
             c.set_xdata([d["t"][i]] * 2)
-        info.set_text(f"t {d['t'][i]:4.1f} s   distance {error[i]:5.1f} m   bank {d['roll_deg'][i]:5.0f}°   "
-                      f"airspeed {d['airspeed'][i]:4.1f} m/s   (x{speed:g} speed, airplane drawn x{scale:.0f})")
+        state = f"   {opts['--event-label'].upper()}" if event[i] else ""
+        alpha = f"   alpha {d['alpha_deg'][i]:4.1f}°" if "alpha_deg" in d else ""
+        info.set_text(f"t {d['t'][i]:4.1f} s   distance {error[i]:5.1f} m   bank {d['roll_deg'][i]:4.0f}°   "
+                      f"pitch {d['pitch_deg'][i]:4.0f}°   airspeed {d['airspeed'][i]:4.1f} m/s{alpha}{state}   "
+                      f"(x{speed:g}, airplane x{scale:.0f})")
         return []
 
     anim = animation.FuncAnimation(fig, draw, frames=frames, blit=False)
