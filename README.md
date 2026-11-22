@@ -1,134 +1,121 @@
-# Fixed-Wing: reinforcement learning for low-level fixed-wing flight control
+# Fixed-Wing: learning low-level fixed-wing control with the Learning to Fly recipe
 
-| Straight line, as in training | Circle, R 25 m (43° of bank) |
+| Wind, turbulence and thermals | Strong turbulence, turning point |
 | --- | --- |
-| ![Straight line](docs/media/straight.gif) | ![Circle at 43 degrees of bank](docs/media/circle_43deg.gif) |
-| **Figure-eight, up to 43° of bank** | **Circle, R 9 m (69°): where it breaks** |
-| ![Figure-eight](docs/media/figure_eight_43deg.gif) | ![Circle at 69 degrees of bank](docs/media/circle_69deg.gif) |
+| ![2-minute flight in wind, turbulence and thermals](docs/figures/simple_flight_thermals.png) | ![2-minute flight in strong turbulence after a turning point](docs/figures/simple_flight_turbulence.png) |
 
-*A SAC policy flying PX4's `advanced_plane` (blue, drawn 10 times larger than its span) after a moving point (black),
-in simulation, 3 times real speed. Right of each: distance to the point and airspeed. Trained only on points that fly
-straight; first test flight of seed 4 of `fine2m_bonus4` at each level
-([`reference_suite_fine`](cpp/results/reference_suite_fine/README.md)).*
+*Simulation. A SAC policy flies PX4's `advanced_plane` (blue) after a moving point (black, dashed path) for 2 minutes.
+Right of each: distance to the point and airspeed. Energy weight 0, seed 1. Frames of 2-minute videos (not committed).*
 
-A fixed-wing flight simulator I wrote in Python and C++ (RLtools), in which SAC policies fly the four control surfaces
-at 50 Hz. MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). Simulation only.
+MEng capstone at UC Berkeley, ARPL (Prof. Giuseppe Loianno). We apply the method of *Learning to Fly in Seconds*
+(L2F) to a fixed-wing airplane: a fast C++ simulator, SAC, domain randomization. The policy flies the four control
+surfaces at 50 Hz to follow a moving point in wind, turbulence, gusts and thermals. **Simulation only.**
 
-- Following a moving point flying straight on PX4's `advanced_plane`: 1.4 m position error (RMS) and 98% of test
-  flights completed, over 10 training seeds, down from 9.8 m with the L2F reward; 16 min of training with the
-  reward terms as norms, as in RLtools' L2F reward.
-- Points that turn: 2.0 m on a 300 m circle, 4.4 m at 21° of bank, 7.3 m at 43°; past 60° of bank the policy fails.
-- The lab's 83 g E-flite UMX Eratix, modeled from its specs: SAC flies it after 2.4 min of training and completes 99%
-  of test flights after the full 18 min run.
-- The trained policy flies the airplane in PX4 SITL and Gazebo through a ROS 2 offboard node at 50 Hz. An
-  identification flight showed no bias between this simulator's predictions and Gazebo.
-
-[Poster](poster/README.md) · [Detailed results](docs/RESULTS.md) · [Reward and method](docs/method.md) · [C++ port and PX4 SITL](cpp/README.md) ·
-[Eratix model](docs/eratix_model.md) · [Components](docs/reproduce.md) ·
-Related: [WingJEPA](https://github.com/clementdumeril/WingJEPA), [GeneticWing](https://github.com/clementdumeril/GeneticWing)
-
-## Pipeline
+## 1. The method, taken from L2F
 
 ```mermaid
 flowchart LR
-    A["Flight data<br/>(not yet)"] -->|"identification<br/>(IROS 2024 method)"| B["Airframe model"]
-    G["Gazebo AdvancedLiftDrag<br/>coefficients, or specs"] --> B
-    B --> C["6-DOF simulator<br/>L2F structure, C++ / RLtools"]
-    C --> D["SAC training<br/>L2F recipe, 4 M steps"]
-    D --> E["Best checkpoint<br/>(validation)"]
-    E --> F["Tests: 100 flights,<br/>points that accelerate"]
-    E --> H["PX4 SITL in Gazebo<br/>ROS 2 node, 50 Hz"]
-    H -.-> I["Real airplane<br/>(not yet)"]
+    A["Randomized episode<br/>airplane, wind, thermals"] --> B["C++ simulator<br/>6-DOF, 50 Hz"]
+    B --> C["SAC<br/>RLtools, 1 core"]
+    C -->|"every 50 k steps"| D["Validation<br/>100 flights of 30 s"]
+    D --> E["Best checkpoint"]
+    E --> F["Tests<br/>100 flights of 2 min,<br/>disturbed and calm"]
 ```
 
-1. **Model.** The `advanced_plane` uses the coefficients Gazebo simulates it with (AdvancedLiftDrag); the Eratix comes
-   from its specs. Identifying a real airplane from its flights, as L2F's authors do for quadrotors (Eschmann, Albani,
-   Loianno, IROS 2024), is the next step and is not done here.
-2. **Simulator.** 6-DOF rigid body, actuator lag and latency, RK4 at 50 Hz, in the structure of L2F (parameters, state,
-   observe / reward / terminate), so that RLtools trains on it as on its quadrotor.
-3. **Training.** SAC with L2F's update intervals and batch, asymmetric actor-critic, random starts (roll ±60°), 4 M
-   steps: 16.7 min on one core, 95 % of it in the network updates. Reward: L2F's form with the norms of the errors (2
-   minus weighted norms, the weights grown every 100 k steps), with a velocity target toward the point, a fine-scale
-   position input and a bonus for staying close ([method](docs/method.md), [recipe](cpp/README.md#the-precision-recipe)).
-4. **Selection.** Every 50 k steps a validation flight set; the kept actor is the most precise one with at least 97 %
-   of flights completed.
-5. **Tests.** 100 flights from level and from random starts on a straight line, then circles, helices, figure-eights
-   and speed changes with the acceleration swept past what the airplane can follow.
-6. **Deployment.** The actor is exported as C++ and flown in PX4 SITL; the real airplane is not flown yet.
+- **Simulator.** 6-DOF rigid body, PX4's `advanced_plane` with the aerodynamic coefficients Gazebo uses for it,
+  actuator lag, 0–2 steps of command latency, RK4. It is written in the structure of the L2F environment of
+  [RLtools](https://github.com/rl-tools/rl-tools) (parameters, state, observe / reward / terminate), so RLtools trains
+  on it as on its quadrotor. 8 M steps take about 35 min on one CPU core.
+- **SAC with an asymmetric actor-critic.** The actor sees only quantities PX4 estimates (attitude, rates,
+  velocity, airspeed, the error to the point), without noise for now, and its last 10 commands. The critics also see the true wind, the randomization
+  factors and the latency. Critics updated every 10 steps and the actor every 20, as in the L2F paper.
+- **Domain randomization.** Each episode draws a new airplane (mass ±10 %, thrust ±15 %, each aerodynamic
+  coefficient ±10 %, latency 0–2 steps) and new air (below).
+- **Training loop.** 30 s episodes, 8 M steps. When a reward weight changes, the rewards stored in the replay buffer
+  are recomputed, as in L2F.
+- **Checkpoints.** Every 50 k steps the actor flies 100 validation flights. After 1 M steps, we keep the most precise one
+  among those that complete at least 97 % of them.
+- **Evaluation.** The kept actor flies 100 test flights of 2 minutes (4 times the training episode) from fixed starts,
+  airplanes and air, once disturbed and once in calm air. We report the share of flights completed and the position
+  RMSE of the completed flights.
 
-## Results
+Details: [docs/method.md](docs/method.md).
 
-![Tracking error after each change of the training](docs/figures/error_reduction.png)
+## 2. What we did: follow a moving point with a simple reward
 
-From the L2F reward (9.8 m) to 1.4 m, each change kept: a stronger velocity target toward the point (K 0.1 to 0.3 /s),
-the position error also seen on a 2 m scale with a bonus for being close, the precise checkpoint choice, a larger
-bonus weight and twice the steps. The same terms as norms instead of squares, as in RLtools' L2F reward, reach 1.4 m
-in 4 M steps, 16.7 min instead of 32 ([`reward_px4plane`](cpp/results/reward_px4plane/README.md)); that is the recipe
-the code keeps. What is left is a steady offset of about 1 m per axis (behind, sideways, altitude) with 0.1 m of
-motion around it ([`fine_px4plane`](cpp/results/fine_px4plane/README.md)). L2F's smaller critics (32 or
-64 instead of 128) train 1.7–2.7 times faster but lose the precision
-([`speed_px4plane`](cpp/results/speed_px4plane/README.md)). Script: `cpp/tools/plot_error_reduction.py`.
+The point starts within 5 m of the airplane and flies at 12–18 m/s, straight in half the flights and turning (5–30°
+of equivalent bank) in the other half. The reward is the L2F reward of RLtools, in meters, plus an energy term:
 
-![Success and error against the acceleration of the point](cpp/results/reference_suite_fine/compare.png)
+$$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + \lVert a_t - a_{t-1} \rVert + w_E \left( \frac{T}{T_{\max}} \right)^{3/2} \right)$$
 
-When the point turns or changes speed, the error grows as a lag behind it (5.6 m behind at 43° of bank): the policy
-sees the point's position and velocity, not its acceleration, and never trained on a turning point. The more precise
-policies also fail earlier past 60° of bank (48 % of circles completed at 69°, against 72 % for the L2F reward).
-Training on accelerating points, with the point's acceleration in the observation, is the next step.
+and $r = -100$ on the step that ends the flight: more than 30 m from the point, angle of attack outside −15° to 18°,
+airspeed outside 7–30 m/s, or below 20 m. $p$ is the airplane's position, $a_t$ the four commands, $T / T_{\max}$
+the thrust over its maximum. The constant 35 is larger than any cost in flight, so flying always pays more than
+crashing (with L2F's 0.5, the policy learns to crash).
 
-## How it works
+Each episode draws its air: wind 0–6 m/s, Dryden turbulence from none to moderate, "1 − cos" gusts up to 3 m/s, and in
+half the episodes a field of drifting Allen thermals (cores 0.5–3 m/s, radius 30–80 m, with a sinking ring).
 
-- 6-DOF simulator (linear aerodynamics, or Gazebo's AdvancedLiftDrag with its post-stall blend for the
-  `advanced_plane`; actuator lag, latency, RK4) in the structure of L2F, "Learning to Fly in Seconds". The C++ port
-  matches the Python one to 7e-13 over 7,136 steps.
-- Three airframes: the Aerosonde, PX4's `advanced_plane` as Gazebo simulates it, and the E-flite UMX Eratix.
-- SAC with an asymmetric actor-critic: the actor sees only what PX4 estimates; the critics also see angle of attack,
-  sideslip and the true wind.
-- Tracking task: the policy sees its position error to the point (also on a fine 2 m scale) and its velocity error;
-  the reward pushes its velocity toward the point (gain 0.3 /s) and adds a bonus for staying close.
-- Videos: `cpp/tools/render_flight_video.py` turns recorded flights into a 3D animation (GIF or MP4).
-- Deployment: the actor is exported as plain C++ and run in a ROS 2 node that sends actuator commands to PX4 over
-  uXRCE-DDS.
+## 3. Results
+
+Savio job 41645214: three energy weights $w_E$, 4 seeds each, 8 M steps. Best checkpoint of each run, 100 test
+flights of 2 minutes. "Disturbed": wind, turbulence and gusts in all flights, thermals in 42 of them.
+
+| $w_E$ | Disturbed: completed | Position RMSE | With thermals | Without thermals | Calm: completed | Position RMSE | Energy per flight |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 88 % | 6.4 m | 79 % | 94 % | 99.8 % | 6.1 m | 1.41 kJ |
+| 0.1 | 89 % | 7.4 m | 80 % | 95 % | 99.8 % | 7.0 m | 1.38 kJ |
+| 0.3 | 86 % | 5.8 m | 74 % | 95 % | 100 % | 5.4 m | 1.37 kJ |
+
+Mean over 4 seeds; energy in the disturbed tests. Every run, with its range across seeds:
+[docs/RESULTS.md](docs/RESULTS.md). Files: [`cpp/results/simple_px4plane`](cpp/results/simple_px4plane/README.md).
+
+- Every run completes 84–90 % of the disturbed flights and 99–100 % of the calm ones.
+- Thermals cause most failures: 22 % of the flights with thermals fail, 5 % of those without.
+- The position error is 4–12 m depending on the seed (mean 6.5 m), close to the same in calm air.
+- The energy term changes the energy by less than 3 %, less than the spread between seeds.
+
+## 4. Where it stands
+
+**Solid:**
+- the method and the simulator: the C++ simulator matches the Python one to 7e-13 over 7,136 steps, the wind models
+  match to 2e-14, and each of the 12 runs learns to fly the task;
+- 99–100 % of calm flights and 84–90 % of disturbed flights completed, for all 12 runs.
+
+**Not yet solid:**
+- the airplane moves a lot and oscillates around the point (the right plot of each frame);
+- the position error is 4–12 m (the precision recipe of the archive reached 1.4 m, in calm air only);
+- thermals are the main cause of failure;
+- nothing is validated outside our simulator: these policies are not flown yet in PX4 SITL / Gazebo or on a real
+  airplane.
 
 ## Run it
 
-Python simulator and tests (Python 3.11, Windows 10 or Linux):
+On a Slurm cluster, from `cpp/` (CMake fetches a fixed RLtools commit; Intel MKL or OpenBLAS):
 
 ```bash
-cd python
-pip install -e ".[dev,rl]"
-pytest                                   # 51 passed, about 1 min
-python examples/train_sac.py --steps 1000000 --n-envs 8 --out runs/sac
+source slurm/setup.sh                          # login node: modules, MKL, configure
+sbatch slurm/build.slurm                       # compile and check the C++ port against Python
+sbatch slurm/tracking_px4plane_simple.slurm    # the 12 runs above: 3 energy weights x 4 seeds, 8 M steps
 ```
 
-C++ training and PX4 SITL (Ubuntu 24.04, ROS 2 Jazzy, PX4 built with `make px4_sitl`), from `cpp/`:
+The options of one run are in that Slurm file. Targets, options and the PX4 SITL node: [cpp/README.md](cpp/README.md).
+Python simulator and its 51 tests: [`python/`](python).
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release
-python tools/export_policy.py <run>/actor.h deploy/ros2/fw_policy/policy/policy_weights.h
-bash deploy/ros2/setup_wsl.sh ~/PX4-Autopilot <RLtools include directory>
-bash deploy/ros2/fly_sitl.sh
-```
+## Archive
 
-All targets and options: [cpp/README.md](cpp/README.md). Figure scripts: [docs/reproduce.md](docs/reproduce.md). The
-code keeps the recipes that worked; every variant tried along the way is in tag `experiments-2026-11`.
-
-## Limitations
-
-- Simulation only, no real flight. The Eratix model comes from specs and textbook aerodynamics, not flight data yet.
-- The precision and Eratix policies are trained and tested in calm air. The C++ task with the simple reward adds wind,
-  Dryden turbulence, gusts, thermals and a randomized airplane: 84–90 % of 120 s disturbed flights completed, 99–100 %
-  in calm air (Savio job 41645214).
-- Only those simple-reward runs randomize the airplane (mass ±10 %, thrust ±15 %, coefficients ±10 %, latency 0–2
-  steps), so the sim-to-real question behind the project is still open.
-- On the first task (hold airspeed, altitude, course in wind) a tuned PID still completes more flights than SAC.
+Before this simple reward, we tried many reward variants on the same airplane in calm air: a precision recipe with a
+closeness bonus and a reward curriculum (1.4 m), points that accelerate, the E-flite UMX Eratix with a tanh reward,
+and a first task (hold airspeed, altitude and course) against a PID. Their results:
+[docs/archive](docs/archive/README.md). The precision and Eratix recipes still build; every other variant, with its
+code, Slurm files and results, is in git tag `experiments-2026-11`.
 
 ## Credits
 
 L2F and RLtools: J. Eschmann, D. Albani, G. Loianno, "Learning to Fly in Seconds", RA-L 2024
 ([arXiv:2311.13081](https://arxiv.org/abs/2311.13081)), [rl-tools/rl-tools](https://github.com/rl-tools/rl-tools).
-Aerosonde and Dryden parameters: Beard and McLain, *Small Unmanned Aircraft*, 2012. Thermals: M. J. Allen,
-AIAA 2006-1510. `advanced_plane`: PX4 Gazebo models. SAC: [stable-baselines3](https://github.com/DLR-RM/stable-baselines3).
+Dryden parameters: Beard and McLain, *Small Unmanned Aircraft*, 2012. Thermals: M. J. Allen, AIAA 2006-1510.
+`advanced_plane`: PX4 Gazebo models. Python SAC: [stable-baselines3](https://github.com/DLR-RM/stable-baselines3).
 
 Clément Dumeril, [clement.dumeril.net](https://clement.dumeril.net). MIT license ([LICENSE](LICENSE)); citation in
 [CITATION.cff](CITATION.cff).

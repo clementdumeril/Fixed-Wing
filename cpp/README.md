@@ -16,27 +16,57 @@ The fixed-wing airplane and the low-level RL task of [`python/`](../python), por
 - `src/train_sac.cpp`: SAC with the asymmetric actor-critic and the reward curriculum, with the recomputation of the
   replay buffer, the best checkpoint on validation flights, then the tests.
 
+The main recipe is the [simple reward in wind and thermals](#simple-reward-in-wind-and-thermals), the one of the
+[top-level README](../README.md). The [precision recipe](#the-precision-recipe) and the
+[Eratix recipe](#the-labs-e-flite-umx-eratix) still build; their results are in the
+[archive](../docs/archive/README.md).
+
 This branch keeps the recipes that worked. Every variant tried along the way (other network and batch sizes, TD3, the
 L2F update intervals alone, the error integral, other reward forms, near starts, profiling) is in tag
 `experiments-2026-11`, with its targets, options, Slurm files and results.
 
-## How I checked it
+## Simple reward in wind and thermals
 
-`tools/compare_with_python.py` records flights with the Python environment (seeds 0 to 9 with random commands around
-trim, and a full nose-up flight that stalls), replays the same commands from the same starts in C++ (`src/check.cpp`)
-and compares every step: 11 flights, 7136 steps, states within 7e-13, rewards within 8e-15, the same terminations, and
-observations within 1.2e-7 (Python stores them as float32). `tools/compare_wind_with_python.py` does the same for the
-wind models (`src/check_wind.cpp`, see below). Results: first trainings [`results/`](results/README.md), network and
-batch size sweep [`results/sweep`](results/sweep/README.md), 3 M steps with the best checkpoint
-[`results/long_px4plane`](results/long_px4plane/README.md), the L2F reward form
-[`results/l2f_reward_px4plane`](results/l2f_reward_px4plane/README.md), closing the steady lag
-[`results/precision_px4plane`](results/precision_px4plane/README.md), the fine-scale observation
-[`results/fine_px4plane`](results/fine_px4plane/README.md), training time against precision
-[`results/speed_px4plane`](results/speed_px4plane/README.md), the reward with norms
-[`results/reward_px4plane`](results/reward_px4plane/README.md), points that accelerate
-[`results/reference_suite`](results/reference_suite/README.md) and
-[`results/reference_suite_fine`](results/reference_suite_fine/README.md), the first Eratix model
-[`results/eratix`](results/eratix/README.md).
+`train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind` (`FW_DISTURBANCES=1`) is the main recipe: the
+advanced_plane follows a moving point (the tracking task, [below](#targets)) in a disturbed world, with
+`--reward simple`, the reward of RLtools' L2F environment in meters, without rescaling:
+
+$$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + \lVert a_t - a_{t-1} \rVert + w_E \left( T / T_{\max} \right)^{3/2} \right)$$
+
+and $r = -100$ on the step that ends a flight; $a$ are the four normalized commands, $T / T_{\max}$ the thrust of the
+rotor model over its maximum ($(\omega / \omega_{\max})^2$, from the rotor speed state). `--simple-constant C`
+replaces the 35: with 0.5, as in RLtools, every step more than 0.5 m from the point costs, so ending the flight pays
+better than flying on and the policy learns to crash. `--energy-weight W` ramps $w_E$ linearly from 0 to W between
+the steps of `--energy-ramp START END` (default 1M and 3M), with the stored rewards recomputed from the critic
+observations at every curriculum check (`--curriculum-period`). `slurm/tracking_px4plane_simple.slurm` also passes
+`--distance-max 30 --near-start 1 5 --reference-heading-max 20` (the point starts within 5 m, its heading within 20°
+of the airplane's course, and the flight ends 30 m from it). Savio job 41645214 (energy weights 0, 0.1 and 0.3, 4
+seeds each, 8M steps): 84-90 % of the 120 s disturbed test flights completed, 99-100 % in calm air
+([`results/simple_px4plane`](results/simple_px4plane/README.md), [`../docs/RESULTS.md`](../docs/RESULTS.md)).
+
+Every episode draws (`include/fixed_wing/operations_generic.h`): a constant horizontal wind of 0-6 m/s in any
+direction (`--wind-max`); Dryden turbulence from none to the low-altitude moderate preset (`--turbulence-max`, a
+fraction of it); "1 - cos" gusts of up to 3 m/s in any direction lasting 1-3 s, one per minute on average
+(`--gust-rate`); in half the episodes (`--thermal-fraction`) an Allen thermal field, as many updrafts as Allen's
+Eq. (20) gives for the field, each with a core of 0.5-3 m/s and a radius of 30-80 m at 90 m of altitude, a sinking
+ring around it (the downdraft ring of Allen's Eqs. (17)-(18) at full strength, which his model keeps above half the
+mixing layer only), the centres drifting with the constant wind; the field covers the flight relative to the air,
+with one updraft where the airplane is at mid-flight. The point flies straight in half the episodes and turns at a
+constant rate (equivalent bank 5-30°) in the other half (`--turn-fraction`, `reference_motion.h`). The airplane's mass
+is randomized by ±10 %, its maximum thrust by ±15 %, each advanced_plane coefficient by ±10 % (`advanced_aerodynamics`,
+through the 28 factors of `Parameters::randomization`), and the command latency is 0-2 steps. `--calm` removes the
+air disturbances. The actor observes the same 65 inputs as without disturbances; the critic also sees the local wind (constant, gust,
+thermal and turbulence together), the randomization factors, the latency and the acceleration of the point.
+
+The tests fly 100 flights of `--eval-duration` seconds (default 120) from fixed starts, airplanes and air:
+`evaluation_disturbed.json` (success rate, position RMSE, energy per completed flight from the shaft power of the
+rotor model, $Q \omega$ with $Q = 0.01 T$, and mean power), split with and without thermals, and
+`evaluation_calm.json` (the same task in calm air); the best checkpoint is chosen on 100 disturbed validation flights
+of 30 s. `tools/compare_wind_with_python.py build/check_wind` checks the C++ wind against the Python model
+(`python/fixed_wing/airplane/operations.py`) value by value: 1440 local winds and Allen updrafts within 2e-15 m/s,
+2700 Dryden filter states within 1.6e-14 with the same normal draws. For the Dryden states the script uses the C++
+square root of the 2×2 noise covariance in the Python filter, and checks it against NumPy's (`np.linalg.eigh`) as
+$G G^\top$, which does not depend on the sign and order conventions of the LAPACK build.
 
 ## Build and run
 
@@ -46,8 +76,11 @@ cmake --build build --config Release
 python tools/compare_with_python.py build/check        # needs the Python package (pip install -e ../python)
 python tools/compare_wind_with_python.py build/check_wind
 python tools/export_scenarios.py build/scenarios_calm.txt
-./build/train_sac build/scenarios_calm.txt runs/sac 0 1000000
+./build/train_sac build/scenarios_calm.txt runs/sac 0 1000000          # first task, Aerosonde
 ```
+
+The main recipe runs with the options of `slurm/tracking_px4plane_simple.slurm`:
+`./build/train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind build/scenarios_calm.txt runs/simple 0 8000000 <options>`.
 
 `-DRL_TOOLS_DIR=<checkout>` uses a local RLtools instead. Without a BLAS library RLtools falls back to plain loops and
 the networks dominate the run time; with Intel MKL on one laptop core the first task trains at about 60 steps/s
@@ -55,14 +88,22 @@ the networks dominate the run time; with Intel MKL on one laptop core the first 
 steps). On Windows, `pip install mkl-devel` and `-DMKL_DIR=<venv>/Library/lib/cmake/mkl -DMKL_THREADING=sequential`
 work.
 
+## How I checked it
+
+`tools/compare_with_python.py` records flights with the Python environment (seeds 0 to 9 with random commands around
+trim, and a full nose-up flight that stalls), replays the same commands from the same starts in C++ (`src/check.cpp`)
+and compares every step: 11 flights, 7136 steps, states within 7e-13, rewards within 8e-15, the same terminations, and
+observations within 1.2e-7 (Python stores them as float32). `tools/compare_wind_with_python.py` does the same for the
+wind models (`src/check_wind.cpp`, see above). Results of every recipe: [`results/`](results/README.md).
+
 ## Targets
 
 | Target | What it trains or does | Job file |
 | --- | --- | --- |
 | `train_sac` | first task (airspeed, altitude, course) on the Aerosonde with the settings of `python/examples/train_sac.py`: critic 256, batch 256, discount 0.99, an update at every step | |
-| `train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine` | following a moving point on PX4's `advanced_plane`, with the position error also seen on a 2 m scale (65 inputs): critic 128, batch 256, discount 0.995, the critics updated every 10 steps and the actor every 20 (L2F paper). The precision recipe | `slurm/tracking_px4plane_reward.slurm` |
-| `train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind` | the same in wind, turbulence, gusts and thermals, with randomized airplanes | `slurm/tracking_px4plane_simple.slurm` |
-| `train_sac_c128_b256_tracking_g995_eratix_i10a20` | following a moving point on the lab's E-flite UMX Eratix, without the fine observation (62 inputs) | `slurm/tracking_eratix.slurm` |
+| `train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine` | following a moving point on PX4's `advanced_plane`, with the position error also seen on a 2 m scale (65 inputs): critic 128, batch 256, discount 0.995, the critics updated every 10 steps and the actor every 20 (L2F paper). The precision recipe (archived results) | `slurm/tracking_px4plane_reward.slurm` |
+| `train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind` | the same in wind, turbulence, gusts and thermals, with randomized airplanes. **The main recipe** | `slurm/tracking_px4plane_simple.slurm` |
+| `train_sac_c128_b256_tracking_g995_eratix_i10a20` | following a moving point on the lab's E-flite UMX Eratix, without the fine observation (62 inputs) (archived results) | `slurm/tracking_eratix.slurm` |
 | `check`, `check_wind` | the C++ port against the Python environment and wind models | `slurm/build.slurm` |
 | `evaluate_reference`, `evaluate_reference_fine` | an `advanced_plane` tracking actor when the point accelerates (62 or 65 inputs) | |
 | `compare_sitl` | a PX4 SITL flight of the deployed policy against this simulator | |
@@ -121,18 +162,6 @@ The tracking task exists in C++ only. A reference point starts up to 50 m from t
 policy sees the position and velocity errors in the body frame (62 inputs, 65 with the fine scale), and the reward
 penalizes the distances to the reference position and velocity.
 
-## The precision recipe
-
-`slurm/tracking_px4plane_reward.slurm`: `train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine`, 4M steps,
-
-```bash
---reward l2f-norm --start random --position-scale 20 --velocity-guidance 0.3 --alpha-weight 1 --position-bonus 4 \
---curriculum-period 100000 --checkpoint-interval 50000 --checkpoint-precise 0.97 1000000
-```
-
-1.4 ± 0.45 m RMS position error on test A, 98 % of the flights completed, over 10 seeds, 16.7 min per run on a Savio
-core ([`results/reward_px4plane`](results/reward_px4plane/README.md), `norm_bonus4`).
-
 ## On a Slurm cluster
 
 From `Fixed-Wing/cpp`, with the Python venv of [`python/slurm`](../python/slurm/README.md):
@@ -140,9 +169,9 @@ From `Fixed-Wing/cpp`, with the Python venv of [`python/slurm`](../python/slurm/
 ```bash
 source slurm/setup.sh          # login node: modules, Intel MKL in the venv, configure (downloads RLtools)
 sbatch slurm/build.slurm       # compute node: compile, export the test scenarios, check against Python
-sbatch slurm/tracking_px4plane_reward.slurm   # the precision recipe on the advanced_plane, 4M steps, 10 seeds
-sbatch slurm/tracking_px4plane_simple.slurm   # the simple reward in wind and thermals, energy weights 0, 0.1, 0.3, 8M steps, 4 seeds each
-sbatch slurm/tracking_eratix.slurm            # the Eratix model, tanh reward, 4M steps, 10 seeds
+sbatch slurm/tracking_px4plane_simple.slurm   # main: the simple reward in wind and thermals, energy weights 0, 0.1, 0.3, 8M steps, 4 seeds each
+sbatch slurm/tracking_px4plane_reward.slurm   # archive: the precision recipe on the advanced_plane, calm air, 4M steps, 10 seeds
+sbatch slurm/tracking_eratix.slurm            # archive: the Eratix model, tanh reward, calm air, 4M steps, 10 seeds
 ```
 
 Each run writes `runs/<name>_<job>_seed<k>/` with `progress.csv`, the evaluations and the files above.
@@ -198,7 +227,23 @@ writes `reference_suite.json`, one row per flight in `flights_summary.csv` and a
 `tools/plot_reference_suite.py` averages runs and draws the figures, `tools/render_flight_video.py` turns recorded
 flights into a 3D animation. Training and the calm-air tests move the point in a straight line.
 
-## The lab's E-flite UMX Eratix
+## Archived recipes
+
+Trained and tested in calm air with a nominal airplane. Results and discussion: [docs/archive](../docs/archive/README.md).
+
+### The precision recipe
+
+`slurm/tracking_px4plane_reward.slurm`: `train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine`, 4M steps,
+
+```bash
+--reward l2f-norm --start random --position-scale 20 --velocity-guidance 0.3 --alpha-weight 1 --position-bonus 4 \
+--curriculum-period 100000 --checkpoint-interval 50000 --checkpoint-precise 0.97 1000000
+```
+
+1.4 ± 0.45 m RMS position error on test A, 98 % of the flights completed, over 10 seeds, 16.7 min per run on a Savio
+core ([`results/reward_px4plane`](results/reward_px4plane/README.md), `norm_bonus4`).
+
+### The lab's E-flite UMX Eratix
 
 `FW_AIRPLANE=2` flies the E-flite UMX Eratix 3D FF 450 mm (83.5 g, flat foam), a first model from its specs, product
 photos and textbook aerodynamics, before any flight data: [`../docs/eratix_model.md`](../docs/eratix_model.md) gives
@@ -219,43 +264,3 @@ are randomized, and a motor-propeller model whose thrust falls with the airspeed
 ([`results/eratix`](results/eratix/README.md)). `eratix_trim [out_dir]` prints the trim table, stall speed, linear
 modes and a hands-off flight.
 
-## Simple reward in wind and thermals
-
-`train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind` (`FW_DISTURBANCES=1`) is the advanced_plane recipe in a
-disturbed world, with `--reward simple`, the reward of RLtools' L2F environment in meters, without rescaling:
-
-$$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + \lVert a_t - a_{t-1} \rVert + w_E \left( T / T_{\max} \right)^{3/2} \right)$$
-
-and $r = -100$ on the step that ends a flight; $a$ are the four normalized commands, $T / T_{\max}$ the thrust of the
-rotor model over its maximum ($(\omega / \omega_{\max})^2$, from the rotor speed state). `--simple-constant C`
-replaces the 35: with 0.5, as in RLtools, every step more than 0.5 m from the point costs, so ending the flight pays
-better than flying on and the policy learns to crash. `--energy-weight W` ramps $w_E$ linearly from 0 to W between
-the steps of `--energy-ramp START END` (default 1M and 3M), with the stored rewards recomputed from the critic
-observations at every curriculum check (`--curriculum-period`). `slurm/tracking_px4plane_simple.slurm` also passes
-`--distance-max 30 --near-start 1 5 --reference-heading-max 20` (the point starts within 5 m, its heading within 20°
-of the airplane's course, and the flight ends 30 m from it). Savio job 41645214 (energy weights 0, 0.1 and 0.3, 4
-seeds each, 8M steps): 84-90 % of the 120 s disturbed test flights completed, 99-100 % in calm air.
-
-Every episode draws (`include/fixed_wing/operations_generic.h`): a constant horizontal wind of 0-6 m/s in any
-direction (`--wind-max`); Dryden turbulence from none to the low-altitude moderate preset (`--turbulence-max`, a
-fraction of it); "1 - cos" gusts of up to 3 m/s in any direction lasting 1-3 s, one per minute on average
-(`--gust-rate`); in half the episodes (`--thermal-fraction`) an Allen thermal field, as many updrafts as Allen's
-Eq. (20) gives for the field, each with a core of 0.5-3 m/s and a radius of 30-80 m at 90 m of altitude, a sinking
-ring around it (the downdraft ring of Allen's Eqs. (17)-(18) at full strength, which his model keeps above half the
-mixing layer only), the centres drifting with the constant wind; the field covers the flight relative to the air,
-with one updraft where the airplane is at mid-flight. The point flies straight in half the episodes and turns at a
-constant rate (equivalent bank 5-30°) in the other half (`--turn-fraction`, `reference_motion.h`). The airplane's mass
-is randomized by ±10 %, its maximum thrust by ±15 %, each advanced_plane coefficient by ±10 % (`advanced_aerodynamics`,
-through the 28 factors of `Parameters::randomization`), and the command latency is 0-2 steps. `--calm` removes the
-air disturbances. The actor observes what it observed before; the critic also sees the local wind (constant, gust,
-thermal and turbulence together), the randomization factors, the latency and the acceleration of the point.
-
-The tests fly 100 flights of `--eval-duration` seconds (default 120) from fixed starts, airplanes and air:
-`evaluation_disturbed.json` (success rate, position RMSE, energy per completed flight from the shaft power of the
-rotor model, $Q \omega$ with $Q = 0.01 T$, and mean power), split with and without thermals, and
-`evaluation_calm.json` (the same task in calm air); the best checkpoint is chosen on 100 disturbed validation flights
-of 30 s. `tools/compare_wind_with_python.py build/check_wind` checks the C++ wind against the Python model
-(`python/fixed_wing/airplane/operations.py`) value by value: 1440 local winds and Allen updrafts within 2e-15 m/s,
-2700 Dryden filter states within 1.6e-14 with the same normal draws. For the Dryden states the script uses the C++
-square root of the 2×2 noise covariance in the Python filter, and checks it against NumPy's (`np.linalg.eigh`) as
-$G G^	op$, which does not depend on the sign and order conventions of the LAPACK build.

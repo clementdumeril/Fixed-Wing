@@ -1,6 +1,7 @@
 # Components, usage and figures
 
-Detail moved out of the top-level README. Reward, curriculum and checks: [method.md](method.md).
+Detail moved out of the top-level README. Method of the main recipe: [method.md](method.md). Reward, gated
+curriculum and checks of the first task: [archive/first_task_method.md](archive/first_task_method.md).
 
 ## What I built
 
@@ -54,6 +55,7 @@ From `python/`, on a committed run directory:
 | `docs/figures/error_reduction.png` | `python tools/plot_error_reduction.py ../docs/figures/error_reduction.png` (from `cpp/`) |
 | `cpp/results/reference_suite_fine/compare.png` | `python tools/plot_reference_compare.py results/reference_suite_fine/compare.png "<label>=<summary.csv>" ...` (from `cpp/`, command in its README) |
 | `docs/media/*.gif` | `build/evaluate_reference_fine <run>/best_actor.h <out> --record 3`, then `python tools/render_flight_video.py <out>/flights/level_<motion>_<level>.csv <gif> --dpi 70 --fps 12 --speed 3` (from `cpp/`; flights of `fine2m_bonus4` seed 4: straight 0, circle 7 and 10, figure_eight 7; that run's job file is in tag `experiments-2026-11`) |
+| `docs/figures/simple_flight_*.png` | frames at 60 s of two 2-minute videos of the `simple_px4plane` policy `energy0/seed1`, made with `tools/render_flight_video.py` from recorded 120 s flights (the videos and flights are not committed) |
 | `docs/figures/overview.png` | hand-written `docs/figures/overview.svg`, crops of the GIF frames above (`ov_*.png`) |
 
 `model.zip` is committed for `calm_seed0` and `windy_seed2` only.
