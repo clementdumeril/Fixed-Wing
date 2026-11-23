@@ -194,7 +194,9 @@ $$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + w_a \lVert a_t - a_{t-1} \r
 - `--velocity-weight W`: $w_v$ (default 0), on the error to the velocity of the point in m/s;
 - `--sideslip-weight W`: $w_\beta$ (default 0), on the sideslip angle in rad. The policies of job 41645214 fly with 10 to
   30° of sideslip, in our simulator and in PX4 SITL + Gazebo alike: AdvancedLiftDrag computes lift and drag from
-  $V \cos\beta$ only, so holding 30° of sideslip at 15 m/s needs 22% less thrust, and nothing in the reward stops it;
+  $V \cos\beta$ only, so holding 30° of sideslip at 15 m/s needs 22% less thrust, and nothing in the reward stops it.
+  Applied from the first step ($w_\beta$ = 5 or 10, 1M steps, one seed), it cut the success rate on the disturbed test
+  flights from 73% to about 60% and doubled the body rates, so the Slurm array ramps it;
 - `--smooth-ramp START END`: the four weights go linearly from their defaults (1, 0, 0, 0) to the given values between
   the two steps, updated at every curriculum check with the stored rewards recomputed (as `--energy-ramp`); without
   it they apply from the first step;
@@ -207,7 +209,8 @@ the test flights of `slurm/tracking_px4plane_simple.slurm` (seed 12345, 120 s) a
 over the completed flights: all flights, helices, straight lines, with and without thermals) and
 `<out_prefix>_flights.csv` (one row per flight). `slurm/tracking_px4plane_smooth.slurm` trains eight variants (base,
 $w_a = 10$, $w_\omega = 2$ ramped from 1M to 3M steps, $w_v = 0.5$, the air-relative point, $w_a = 10$ with
-$w_\omega = 2$ and the air-relative point, $w_\beta = 5$, and that combination with $w_\beta = 5$), 4 seeds each,
+$w_\omega = 2$ and the air-relative point, $w_\beta = 5$ ramped from 1M to 3M steps, and the same with the air-relative
+point), 4 seeds each,
 and runs `evaluate_smoothness` on each best actor, on both the ground-fixed and the air-relative point.
 
 ## PX4's advanced_plane and flying the policy in Gazebo

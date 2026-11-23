@@ -18,8 +18,8 @@ export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib:${LD_LIBRARY_PATH:-}"
 export MKL_NUM_THREADS=1
 SEED=$((SLURM_ARRAY_TASK_ID % 4))
 VARIANT=$((SLURM_ARRAY_TASK_ID / 4))
-NAMES=(base act10 rate2ramp vel05 air combo beta5 combo_beta5)
-OPTIONS=("" "--action-weight 10" "--rate-weight 2 --smooth-ramp 1000000 3000000" "--velocity-weight 0.5" "--reference-air-relative" "--action-weight 10 --rate-weight 2 --reference-air-relative" "--sideslip-weight 5" "--action-weight 10 --rate-weight 2 --reference-air-relative --sideslip-weight 5")
+NAMES=(base act10 rate2ramp vel05 air combo beta5ramp beta5ramp_air)
+OPTIONS=("" "--action-weight 10" "--rate-weight 2 --smooth-ramp 1000000 3000000" "--velocity-weight 0.5" "--reference-air-relative" "--action-weight 10 --rate-weight 2 --reference-air-relative" "--sideslip-weight 5 --smooth-ramp 1000000 3000000" "--sideslip-weight 5 --smooth-ramp 1000000 3000000 --reference-air-relative")
 NAME=${NAMES[$VARIANT]}
 RUN="runs/tracking_px4plane_smooth_${NAME}_${SLURM_ARRAY_JOB_ID}_seed${SEED}"
 build/train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind build/scenarios_calm.txt "$RUN" "$SEED" 8000000 \
