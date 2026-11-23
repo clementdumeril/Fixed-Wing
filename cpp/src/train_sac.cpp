@@ -670,7 +670,7 @@ std::string evaluate_flights(DEVICE& device, const ACTOR& actor, const std::vect
 
 int run(int argc, char** argv){
     if(argc < 3){
-        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--start trimmed|neutral|random] [--no-trim-reward] [--alpha-weight W] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--curriculum-period P] [--checkpoint-interval N] [--checkpoint-precise P N] [--reward tanh|l2f-norm|simple] [--position-bonus W] [--near-start F D] [--energy-weight W] [--energy-ramp START END] [--simple-constant C] [--action-weight W] [--rate-weight W] [--velocity-weight W] [--reference-air-relative] [--smooth-ramp START END] [--distance-max D] [--reference-heading-max DEG] [--eval-duration S] [--calm] [--wind-max V] [--turbulence-max K] [--gust-rate R] [--thermal-fraction F] [--turn-fraction F]" << std::endl;
+        std::cerr << "usage: train_sac <scenarios.txt> <out_dir> [seed] [steps] [--start trimmed|neutral|random] [--no-trim-reward] [--alpha-weight W] [--position-scale S] [--position-linear W] [--velocity-guidance K] [--curriculum-period P] [--checkpoint-interval N] [--checkpoint-precise P N] [--reward tanh|l2f-norm|simple] [--position-bonus W] [--near-start F D] [--energy-weight W] [--energy-ramp START END] [--simple-constant C] [--action-weight W] [--rate-weight W] [--velocity-weight W] [--sideslip-weight W] [--reference-air-relative] [--smooth-ramp START END] [--distance-max D] [--reference-heading-max DEG] [--eval-duration S] [--calm] [--wind-max V] [--turbulence-max K] [--gust-rate R] [--thermal-fraction F] [--turn-fraction F]" << std::endl;
         return 1;
     }
     std::vector<Scenario> scenarios = load_scenarios(argv[1]);
@@ -696,7 +696,7 @@ int run(int argc, char** argv){
     T_ENV energy_ramp_start = 1000000, energy_ramp_end = 3000000;
     T_ENV simple_constant = defaults.simple_constant;
     T_ENV action_weight = defaults.simple_action_weight, rate_weight = defaults.simple_rate_weight;
-    T_ENV velocity_weight = defaults.simple_velocity_weight;
+    T_ENV velocity_weight = defaults.simple_velocity_weight, sideslip_weight = defaults.simple_sideslip_weight;
     bool air_relative = false;
     bool smooth_ramp = false;
     T_ENV smooth_ramp_start = 0, smooth_ramp_end = 0;
@@ -727,6 +727,7 @@ int run(int argc, char** argv){
         else if(option == "--action-weight" && i + 1 < argc) action_weight = std::stod(argv[++i]);
         else if(option == "--rate-weight" && i + 1 < argc) rate_weight = std::stod(argv[++i]);
         else if(option == "--velocity-weight" && i + 1 < argc) velocity_weight = std::stod(argv[++i]);
+        else if(option == "--sideslip-weight" && i + 1 < argc) sideslip_weight = std::stod(argv[++i]);
         else if(option == "--reference-air-relative") air_relative = true;
         else if(option == "--smooth-ramp" && i + 2 < argc){ smooth_ramp = true; smooth_ramp_start = std::stod(argv[++i]); smooth_ramp_end = std::stod(argv[++i]); }
         else if(option == "--distance-max" && i + 1 < argc) distance_max = std::stod(argv[++i]);
@@ -755,8 +756,8 @@ int run(int argc, char** argv){
     const bool simple = reward_form == "simple";
     if(reward_form != "tanh" && !FW_TRACKING) throw std::runtime_error("--reward l2f-norm and simple are for the tracking task");
     if(!simple && (energy_weight != 0 || simple_constant != defaults.simple_constant)) throw std::runtime_error("--energy-weight and --simple-constant need --reward simple");
-    if(!simple && (action_weight != defaults.simple_action_weight || rate_weight != defaults.simple_rate_weight || velocity_weight != defaults.simple_velocity_weight)) throw std::runtime_error("--action-weight, --rate-weight and --velocity-weight need --reward simple");
-    if(action_weight < 0 || rate_weight < 0 || velocity_weight < 0) throw std::runtime_error("--action-weight, --rate-weight and --velocity-weight need W >= 0");
+    if(!simple && (action_weight != defaults.simple_action_weight || rate_weight != defaults.simple_rate_weight || velocity_weight != defaults.simple_velocity_weight || sideslip_weight != defaults.simple_sideslip_weight)) throw std::runtime_error("--action-weight, --rate-weight, --velocity-weight and --sideslip-weight need --reward simple");
+    if(action_weight < 0 || rate_weight < 0 || velocity_weight < 0 || sideslip_weight < 0) throw std::runtime_error("--action-weight, --rate-weight, --velocity-weight and --sideslip-weight need W >= 0");
     if(air_relative && !FW_TRACKING) throw std::runtime_error("--reference-air-relative is for the tracking task");
     if(smooth_ramp && (!simple || smooth_ramp_start < 0 || smooth_ramp_end < smooth_ramp_start)) throw std::runtime_error("--smooth-ramp needs --reward simple and 0 <= START <= END");
     if(energy_weight < 0 || energy_ramp_start < 0 || energy_ramp_end < energy_ramp_start) throw std::runtime_error("--energy-weight needs W >= 0, --energy-ramp 0 <= START <= END");
@@ -785,7 +786,7 @@ int run(int argc, char** argv){
         << ",\n  \"checkpoint_precise\": [" << precise_min_success << ", " << precise_after << "]"
         << ",\n  \"energy_weight\": " << energy_weight << ",\n  \"energy_ramp\": [" << energy_ramp_start << ", " << energy_ramp_end << "]"
         << ",\n  \"simple_constant\": " << simple_constant << ",\n  \"action_weight\": " << action_weight
-        << ",\n  \"rate_weight\": " << rate_weight << ",\n  \"velocity_weight\": " << velocity_weight
+        << ",\n  \"rate_weight\": " << rate_weight << ",\n  \"velocity_weight\": " << velocity_weight << ",\n  \"sideslip_weight\": " << sideslip_weight
         << ",\n  \"reference_air_relative\": " << (air_relative ? "true" : "false")
         << ",\n  \"smooth_ramp\": [" << smooth_ramp_start << ", " << smooth_ramp_end << "],\n  \"distance_max\": " << distance_max
         << ",\n  \"reference_heading_max_deg\": " << heading_max_deg << ",\n  \"eval_duration\": " << eval_duration
@@ -823,6 +824,7 @@ int run(int argc, char** argv){
             c.simple_action_weight = action_weight;
             c.simple_rate_weight = rate_weight;
             c.simple_velocity_weight = velocity_weight;
+            c.simple_sideslip_weight = sideslip_weight;
             return;
         }
         T_ENV progress = smooth_ramp_end <= smooth_ramp_start ? T_ENV(T_ENV(step) >= smooth_ramp_start)
@@ -830,6 +832,7 @@ int run(int argc, char** argv){
         c.simple_action_weight = defaults.simple_action_weight + progress * (action_weight - defaults.simple_action_weight);
         c.simple_rate_weight = progress * rate_weight;
         c.simple_velocity_weight = progress * velocity_weight;
+        c.simple_sideslip_weight = progress * sideslip_weight;
     };
     if(simple){
         curriculum.simple = true;
@@ -884,7 +887,7 @@ int run(int argc, char** argv){
     progress << "time/total_timesteps,rollout/ep_len_mean,rollout/ep_rew_mean,"
              << (FW_TRACKING ? "train/position_error_m" : "train/course_error_deg") << ",curriculum/stage,time/time_elapsed,curriculum/bonus_scale"
              << (simple ? ",curriculum/energy_weight,rollout/terminated_fraction" : "")
-             << (smooth_ramp ? ",curriculum/action_weight,curriculum/rate_weight,curriculum/velocity_weight" : "") << "\n";
+             << (smooth_ramp ? ",curriculum/action_weight,curriculum/rate_weight,curriculum/velocity_weight,curriculum/sideslip_weight" : "") << "\n";
     auto start = std::chrono::steady_clock::now();
     auto& runner = ts.off_policy_runner;
     TI next_check = curriculum.period;
@@ -914,7 +917,7 @@ int run(int argc, char** argv){
             progress << step << "," << w.episode_length << "," << w.episode_return << "," << w.task_error * TASK_ERROR_TO_UNIT
                      << "," << stage << "," << elapsed << "," << curriculum.at_stage(stage).position_bonus_scale;
             if(simple) progress << "," << curriculum.initial.energy_weight << "," << w.terminated_fraction;
-            if(smooth_ramp) progress << "," << curriculum.initial.simple_action_weight << "," << curriculum.initial.simple_rate_weight << "," << curriculum.initial.simple_velocity_weight;
+            if(smooth_ramp) progress << "," << curriculum.initial.simple_action_weight << "," << curriculum.initial.simple_rate_weight << "," << curriculum.initial.simple_velocity_weight << "," << curriculum.initial.simple_sideslip_weight;
             progress << std::endl;
             std::cout << "step " << step << "  episode length " << std::setprecision(4) << w.episode_length << "  return "
                       << w.episode_return << "  " << TASK_ERROR_NAME << " " << w.task_error * TASK_ERROR_TO_UNIT << " "
@@ -950,7 +953,7 @@ int run(int argc, char** argv){
                 fixed_wing::RewardConfig<T_ENV> smooth = curriculum.initial;
                 set_smooth_weights(step, smooth);
                 if(smooth.simple_action_weight != curriculum.initial.simple_action_weight || smooth.simple_rate_weight != curriculum.initial.simple_rate_weight
-                   || smooth.simple_velocity_weight != curriculum.initial.simple_velocity_weight){
+                   || smooth.simple_velocity_weight != curriculum.initial.simple_velocity_weight || smooth.simple_sideslip_weight != curriculum.initial.simple_sideslip_weight){
                     curriculum.initial = smooth;
                     changed = true;
                 }

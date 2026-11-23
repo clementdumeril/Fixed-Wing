@@ -1019,13 +1019,14 @@ namespace fixed_wing{
     }
 
     template <typename T>
-    T simple_reward(T distance, const T action_change[N_ACTUATORS], T thrust_ratio, T rate, T velocity_error, const RewardConfig<T>& c){
+    T simple_reward(T distance, const T action_change[N_ACTUATORS], T thrust_ratio, T rate, T velocity_error, T sideslip, const RewardConfig<T>& c){
         T change = 0;
         for(int i = 0; i < N_ACTUATORS; i++) change += action_change[i] * action_change[i];
         T energy = std::pow(std::fmax(thrust_ratio, T(0)), T(1.5));
         T cost = distance + c.simple_action_weight * std::sqrt(change) + c.energy_weight * energy;
         if(c.simple_rate_weight != 0) cost += c.simple_rate_weight * rate;
         if(c.simple_velocity_weight != 0) cost += c.simple_velocity_weight * velocity_error;
+        if(c.simple_sideslip_weight != 0) cost += c.simple_sideslip_weight * std::abs(sideslip);
         return c.simple_constant - cost;
     }
 
@@ -1138,7 +1139,7 @@ namespace fixed_wing{
             tracking_errors(next, e_position, e_velocity);
             for(int i = 0; i < N_ACTUATORS; i++) change[i] = clip(action[i], T(-1), T(1)) - state.action_history[ACTION_HISTORY - 1][i];
             return simple_reward(norm3(e_position), change, thrust_fraction(next.body.actuators[THROTTLE]),
-                                 norm3(next.body.angular_velocity), norm3(e_velocity), config.reward);
+                                 norm3(next.body.angular_velocity), norm3(e_velocity), air_data(p, next.body).beta, config.reward);
         }
         if(termination(p, next, config) != FLYING) return config.reward.l2f_form ? -config.reward.l2f_termination_penalty : 0;
         AirData<T> air = air_data(p, next.body);
@@ -1188,7 +1189,7 @@ namespace fixed_wing{
                 rates[i] = next_observation[ACTOR_RATES_OFFSET + i] * T(PI);
                 velocity[i] = next_observation[3 + i] * 5;
             }
-            return simple_reward(norm3(position), change, thrust_fraction(throttle), norm3(rates), norm3(velocity), c);
+            return simple_reward(norm3(position), change, thrust_fraction(throttle), norm3(rates), norm3(velocity), next_observation[n + 1] * T(0.3), c);
         }
         if(terminated) return c.l2f_form ? -c.l2f_termination_penalty : 0;
         T alpha = next_observation[n] * T(0.3);

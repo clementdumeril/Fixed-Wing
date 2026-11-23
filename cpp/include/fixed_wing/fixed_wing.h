@@ -235,6 +235,7 @@ namespace fixed_wing{
         T simple_action_weight = 1;
         T simple_rate_weight = 0;
         T simple_velocity_weight = 0;
+        T simple_sideslip_weight = 0;
     };
 
     // how an episode starts (sample_initial_state)

@@ -129,7 +129,7 @@ const std::vector<std::string> METRICS = {
     "action_rate_rms", "aileron_rate_rms", "elevator_rate_rms", "rudder_rate_rms", "throttle_rate_rms",
     "action_change_norm_mean", "mean_action_change",
     "airspeed_std", "airspeed_min", "airspeed_max", "required_airspeed_std", "required_airspeed_min", "required_airspeed_max",
-    "throttle_std", "distance_mean", "training_noise_std", "training_noise_action_change"};
+    "throttle_std", "distance_mean", "training_noise_std", "training_noise_action_change", "sideslip_abs_mean_deg", "sideslip_abs_max_deg"};
 
 struct Result{
     int reason = 0;
@@ -150,7 +150,7 @@ Result fly(const Actor& actor, const Flight& flight, const fw::TaskConfig<T>& co
     r.wind = std::hypot(p.wind[0], p.wind[1]);
     Accumulator distance, along, cross, vertical, velocity, roll, pitch, rate[3], rate_norm, roll_excess, required_bank,
                 required_turn, action_rate[fw::N_ACTUATORS], action_norm, action_abs, airspeed, required_airspeed, throttle,
-                noise, noise_change;
+                noise, noise_change, sideslip;
     for(TI step = 0; step < n_steps; step++){
         float observation[Actor::INPUT];
         fw::observe_actor(p, s, [&](int j, T v){ observation[j] = float(v); });
@@ -198,6 +198,7 @@ Result fly(const Actor& actor, const Flight& flight, const fw::TaskConfig<T>& co
         action_norm.add(std::sqrt(change2));
         action_abs.add(change_abs / fw::N_ACTUATORS);
         airspeed.add(air.airspeed);
+        sideslip.add(std::abs(air.beta) * deg);
         required_airspeed.add(fw::norm3(va));
         throttle.add(a[fw::THROTTLE]);
         s = next;
@@ -238,6 +239,8 @@ Result fly(const Actor& actor, const Flight& flight, const fw::TaskConfig<T>& co
     v["distance_mean"] = distance.mean();
     v["training_noise_std"] = noise.mean();
     v["training_noise_action_change"] = noise_change.mean();
+    v["sideslip_abs_mean_deg"] = sideslip.mean();
+    v["sideslip_abs_max_deg"] = sideslip.hi;
     return r;
 }
 
