@@ -211,7 +211,7 @@ def main():
     counts["Dryden noise gain"] = 8 * sum(len(steps) for _, _, steps in sequences)
     ok = True
     for name, error in worst.items():
-        ok &= error <= 1e-9 * max(1.0, scale[name])
+        ok &= error <= (1e-7 if name == "Dryden states" else 1e-9) * max(1.0, scale[name])
         print(f"{name:16s} {counts[name]:5d} values, max |C++ - Python| = {error:.2e} (largest value {scale[name]:.3g})")
     updrafts = [expected_wind(*case[:5], *query)[1] for case in wind_cases for query in case[5]]
     print(f"updrafts checked from {min(updrafts):.3f} to {max(updrafts):.3f} m/s, "

@@ -52,7 +52,10 @@ fw_executable(train_sac_c128_b256_tracking_g995_px4plane_i10a20_fine_wind src/tr
     FW_ACTOR_INTERVAL_FACTOR=2 FW_FINE_POSITION=1 FW_DISTURBANCES=1)
 
 # the wind models against the Python ones, for tools/compare_wind_with_python.py
-fw_executable(check_wind src/check_wind.cpp FW_TRACKING=1 FW_AIRPLANE=1 FW_DISTURBANCES=1)
+add_executable(check_wind src/check_wind.cpp)
+target_include_directories(check_wind PRIVATE include)
+target_link_libraries(check_wind PRIVATE RLtools::Core)
+target_compile_definitions(check_wind PRIVATE FW_TRACKING=1 FW_AIRPLANE=1 FW_DISTURBANCES=1)
 
 # tracking on the lab's E-flite UMX Eratix 3D FF 450 mm (FW_AIRPLANE=2, docs/eratix_model.md), same networks and update
 # intervals, without the fine observation (slurm/tracking_eratix.slurm)
@@ -80,7 +83,7 @@ fw_executable(evaluate_smoothness src/evaluate_smoothness.cpp FW_TRACKING=1 FW_A
 fw_executable(evaluate_limits src/evaluate_limits.cpp FW_TRACKING=1 FW_AIRPLANE=1 FW_FINE_POSITION=1 FW_DISTURBANCES=1)
 target_link_libraries(evaluate_limits PRIVATE Threads::Threads)
 
-list(REMOVE_ITEM FW_TARGETS check check_wind)
+list(REMOVE_ITEM FW_TARGETS check)
 if(NOT MSVC)
     foreach(target ${FW_TARGETS})
         target_compile_options(${target} PRIVATE -O3 -march=native)

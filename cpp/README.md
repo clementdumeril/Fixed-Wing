@@ -66,7 +66,13 @@ of 30 s. `tools/compare_wind_with_python.py build/check_wind` checks the C++ win
 (`python/fixed_wing/airplane/operations.py`) value by value: 1440 local winds and Allen updrafts within 2e-15 m/s,
 2700 Dryden filter states within 1.6e-14 with the same normal draws. For the Dryden states the script uses the C++
 square root of the 2×2 noise covariance in the Python filter, and checks it against NumPy's (`np.linalg.eigh`) as
-$G G^\top$, which does not depend on the sign and order conventions of the LAPACK build.
+$G G^\top$, which does not depend on the sign and order conventions of the LAPACK build. `check_wind` links
+`RLtools::Core` only, without the `-ffast-math -march=native` that `RLtools::RLtools` adds with GCC: on steps of
+hundreds of meters the two noise eigenvalues are nearly equal, and the reordered arithmetic picks another square root
+of the same covariance (Dryden states 0.21 apart, both with $G G^\top$ within 1e-15). Steps up to 1.25 m (training
+steps are below 0.6 m) differ by at most 7.5e-9 between the two builds. With GCC and glibc, the Dryden states match
+within 1.1e-8, as `exp` may differ from NumPy's by one unit in the last place; the script accepts 1e-7 for them and
+1e-9 for the other values.
 
 ## Build and run
 
