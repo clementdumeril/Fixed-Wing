@@ -180,7 +180,8 @@ From `Fixed-Wing/cpp`, with the Python venv of [`python/slurm`](../python/slurm/
 source slurm/setup.sh          # login node: modules, Intel MKL in the venv, configure (downloads RLtools)
 sbatch slurm/build.slurm       # compute node: compile, export the test scenarios, check against Python
 sbatch slurm/tracking_px4plane_simple.slurm   # main: the simple reward in wind and thermals, energy weights 0, 0.1, 0.3, 8M steps, 4 seeds each
-sbatch slurm/tracking_px4plane_smooth.slurm   # next: the same with the smoothness terms and the air-relative point, 8 variants, 8M steps, 4 seeds each
+sbatch slurm/tracking_px4plane_smooth.slurm   # the same with the smoothness terms and the air-relative point, 8 variants, 8M steps, 4 seeds each
+sbatch slurm/tracking_px4plane_smooth2.slurm  # next: body rates and sideslip on the air-relative point, 4 variants, 8M steps, 4 seeds each
 sbatch slurm/tracking_px4plane_reward.slurm   # archive: the precision recipe on the advanced_plane, calm air, 4M steps, 10 seeds
 sbatch slurm/tracking_eratix.slurm            # archive: the Eratix model, tanh reward, calm air, 4M steps, 10 seeds
 ```
@@ -218,6 +219,13 @@ $w_a = 10$, $w_\omega = 2$ ramped from 1M to 3M steps, $w_v = 0.5$, the air-rela
 $w_\omega = 2$ and the air-relative point, $w_\beta = 5$ ramped from 1M to 3M steps, and the same with the air-relative
 point), 4 seeds each,
 and runs `evaluate_smoothness` on each best actor, on both the ground-fixed and the air-relative point.
+
+Results of job 41761071 in [`results/smooth_px4plane/`](results/smooth_px4plane/README.md). On the disturbed test
+flights, $w_\beta = 5$ with the air-relative point gives the lowest position RMSE (3.3 m against 5.1 m for the base)
+and sideslip (7.7° against 11.3°), with more stalls; $w_\omega = 2$ cuts the body rates by 29% at the same success;
+$w_a = 10$ with $w_\omega = 2$ flies at 38° of sideslip. `slurm/tracking_px4plane_smooth2.slurm` trains the next four
+variants, all ramped from 1M to 3M steps on the air-relative point: $w_\omega = 2$ with $w_\beta = 5$, $w_\beta = 10$,
+$w_\omega = 2$ with $w_\beta = 10$, and $w_\beta = 20$.
 
 ## PX4's advanced_plane and flying the policy in Gazebo
 

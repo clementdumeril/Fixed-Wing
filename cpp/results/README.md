@@ -8,6 +8,8 @@ with its table. The actors and recorded flights are not committed.
 - [`simple_px4plane/`](simple_px4plane/README.md): the simple L2F-form reward on PX4's `advanced_plane` in wind,
   turbulence, gusts and thermals, Savio job 41645214. The results of the [README](../../README.md); tables in
   [docs/RESULTS.md](../../docs/RESULTS.md).
+- [`smooth_px4plane/`](smooth_px4plane/README.md): the smoothness terms of the same reward (command change, body
+  rates, velocity, sideslip, air-relative point), Savio job 41761071.
 - `compare_with_python.txt`: the C++ simulator against the Python one (below).
 
 ## Archive

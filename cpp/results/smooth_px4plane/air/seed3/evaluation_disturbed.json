@@ -1,0 +1,6 @@
+{
+  "duration_s": 120,
+  "all": {"flights": 100, "success_rate": 0.96, "position_rmse": 4.706737579, "energy_kj": 1.205703469, "mean_power_w": 10.46609008, "mean_action_change": 0.02051844263, "failures": {"airspeed": 1, "alpha": 3}},
+  "with_thermals": {"flights": 42, "success_rate": 0.9523809524, "position_rmse": 4.766389697, "energy_kj": 1.175983207, "mean_power_w": 9.692602946, "mean_action_change": 0.01880731144, "failures": {"airspeed": 1, "alpha": 1}},
+  "without_thermals": {"flights": 58, "success_rate": 0.9655172414, "position_rmse": 4.664128923, "energy_kj": 1.226932228, "mean_power_w": 11.02620145, "mean_action_change": 0.02174067919, "failures": {"alpha": 2}}
+}
