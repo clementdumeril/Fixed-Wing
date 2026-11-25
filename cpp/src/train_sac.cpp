@@ -18,7 +18,8 @@
 // Options:
 //   --start trimmed|neutral|random: how the training episodes start (TaskConfig::start)
 //   --no-trim-reward: no trim term in the reward, so that the policy finds trim on its own
-//   --alpha-weight W: weight of the reward term that keeps a margin to the stall (RewardConfig::alpha_margin_weight)
+//   --alpha-weight W: weight of the reward term that keeps a margin to the stall (RewardConfig::alpha_margin_weight),
+//   in every reward form, constant during the curriculum and the smooth ramp
 //   --position-scale S, --position-linear W: tracking task, scale of the position cost and weight of the linear distance
 //   cost of the tanh reward (RewardConfig::position_scale, position_linear_weight)
 //   --velocity-guidance K: tracking task, the velocity cost is on the error to the reference velocity plus K x the

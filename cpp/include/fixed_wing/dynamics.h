@@ -1019,7 +1019,13 @@ namespace fixed_wing{
     }
 
     template <typename T>
-    T simple_reward(T distance, const T action_change[N_ACTUATORS], T thrust_ratio, T rate, T velocity_error, T sideslip, const RewardConfig<T>& c){
+    T alpha_excess(T alpha, const RewardConfig<T>& c){
+        // how far the angle of attack is inside the margin before the stall limits (0 away from them)
+        return std::fmax(alpha - c.alpha_soft_max, T(0)) + std::fmax(c.alpha_soft_min - alpha, T(0));
+    }
+
+    template <typename T>
+    T simple_reward(T distance, const T action_change[N_ACTUATORS], T thrust_ratio, T rate, T velocity_error, T sideslip, T alpha, const RewardConfig<T>& c){
         T change = 0;
         for(int i = 0; i < N_ACTUATORS; i++) change += action_change[i] * action_change[i];
         T energy = std::pow(std::fmax(thrust_ratio, T(0)), T(1.5));
@@ -1027,6 +1033,7 @@ namespace fixed_wing{
         if(c.simple_rate_weight != 0) cost += c.simple_rate_weight * rate;
         if(c.simple_velocity_weight != 0) cost += c.simple_velocity_weight * velocity_error;
         if(c.simple_sideslip_weight != 0) cost += c.simple_sideslip_weight * std::abs(sideslip);
+        if(c.alpha_margin_weight != 0) cost += c.alpha_margin_weight * std::fmin(alpha_excess(alpha, c) / c.alpha_margin_scale, T(1));
         return c.simple_constant - cost;
     }
 
@@ -1035,12 +1042,6 @@ namespace fixed_wing{
         if(!turbulent(p)) return;
         T distance = air_data(p, state.body).airspeed * p.dt;
         advance_turbulence_states(p.turbulence_length_scale, state.body.turbulence, distance, normals, next.body.turbulence);
-    }
-
-    template <typename T>
-    T alpha_excess(T alpha, const RewardConfig<T>& c){
-        // how far the angle of attack is inside the margin before the stall limits (0 away from them)
-        return std::fmax(alpha - c.alpha_soft_max, T(0)) + std::fmax(c.alpha_soft_min - alpha, T(0));
     }
 
     template <typename T>
@@ -1138,8 +1139,9 @@ namespace fixed_wing{
             T e_position[3], e_velocity[3], change[N_ACTUATORS];
             tracking_errors(next, e_position, e_velocity);
             for(int i = 0; i < N_ACTUATORS; i++) change[i] = clip(action[i], T(-1), T(1)) - state.action_history[ACTION_HISTORY - 1][i];
+            AirData<T> air = air_data(p, next.body);
             return simple_reward(norm3(e_position), change, thrust_fraction(next.body.actuators[THROTTLE]),
-                                 norm3(next.body.angular_velocity), norm3(e_velocity), air_data(p, next.body).beta, config.reward);
+                                 norm3(next.body.angular_velocity), norm3(e_velocity), air.beta, air.alpha, config.reward);
         }
         if(termination(p, next, config) != FLYING) return config.reward.l2f_form ? -config.reward.l2f_termination_penalty : 0;
         AirData<T> air = air_data(p, next.body);
@@ -1189,7 +1191,7 @@ namespace fixed_wing{
                 rates[i] = next_observation[ACTOR_RATES_OFFSET + i] * T(PI);
                 velocity[i] = next_observation[3 + i] * 5;
             }
-            return simple_reward(norm3(position), change, thrust_fraction(throttle), norm3(rates), norm3(velocity), next_observation[n + 1] * T(0.3), c);
+            return simple_reward(norm3(position), change, thrust_fraction(throttle), norm3(rates), norm3(velocity), next_observation[n + 1] * T(0.3), next_observation[n] * T(0.3), c);
         }
         if(terminated) return c.l2f_form ? -c.l2f_termination_penalty : 0;
         T alpha = next_observation[n] * T(0.3);

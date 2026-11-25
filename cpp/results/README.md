@@ -10,6 +10,8 @@ with its table. The actors and recorded flights are not committed.
   [docs/RESULTS.md](../../docs/RESULTS.md).
 - [`smooth_px4plane/`](smooth_px4plane/README.md): the smoothness terms of the same reward (command change, body
   rates, velocity, sideslip, air-relative point), Savio job 41761071.
+- [`smooth2_px4plane/`](smooth2_px4plane/README.md): the body-rate and sideslip terms together on the air-relative
+  point, sideslip weights up to 20, Savio job 41775052.
 - `compare_with_python.txt`: the C++ simulator against the Python one (below).
 
 ## Archive

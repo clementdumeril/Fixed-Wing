@@ -181,7 +181,8 @@ source slurm/setup.sh          # login node: modules, Intel MKL in the venv, con
 sbatch slurm/build.slurm       # compute node: compile, export the test scenarios, check against Python
 sbatch slurm/tracking_px4plane_simple.slurm   # main: the simple reward in wind and thermals, energy weights 0, 0.1, 0.3, 8M steps, 4 seeds each
 sbatch slurm/tracking_px4plane_smooth.slurm   # the same with the smoothness terms and the air-relative point, 8 variants, 8M steps, 4 seeds each
-sbatch slurm/tracking_px4plane_smooth2.slurm  # next: body rates and sideslip on the air-relative point, 4 variants, 8M steps, 4 seeds each
+sbatch slurm/tracking_px4plane_smooth2.slurm  # body rates and sideslip on the air-relative point, 4 variants, 8M steps, 4 seeds each
+sbatch slurm/tracking_px4plane_smooth3.slurm  # next: sideslip 20 with body rates or the stall margin, and sideslip 40, 8M steps, 4 seeds each
 sbatch slurm/tracking_px4plane_reward.slurm   # archive: the precision recipe on the advanced_plane, calm air, 4M steps, 10 seeds
 sbatch slurm/tracking_eratix.slurm            # archive: the Eratix model, tanh reward, calm air, 4M steps, 10 seeds
 ```
@@ -191,10 +192,10 @@ Each run writes `runs/<name>_<job>_seed<k>/` with `progress.csv`, the evaluation
 ## Smoother flight
 
 The policies of job 41645214 complete their flights, but their commands chatter and their bank swings by tens of
-degrees, in calm air as much as in turbulence (`evaluate_smoothness`). Five options of `--reward simple`, each off by
+degrees, in calm air as much as in turbulence (`evaluate_smoothness`). Six options of `--reward simple`, each off by
 default (the defaults give the same runs, byte for byte):
 
-$$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + w_a \lVert a_t - a_{t-1} \rVert + w_\omega \lVert \omega \rVert + w_v \lVert v - v_{\text{ref}} \rVert + w_\beta \lvert \beta \rvert + w_E \left( T / T_{\max} \right)^{3/2} \right)$$
+$$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + w_a \lVert a_t - a_{t-1} \rVert + w_\omega \lVert \omega \rVert + w_v \lVert v - v_{\text{ref}} \rVert + w_\beta \lvert \beta \rvert + w_\alpha \min\left( e_\alpha / 4^\circ, 1 \right) + w_E \left( T / T_{\max} \right)^{3/2} \right)$$
 
 - `--action-weight W`: $w_a$ (default 1), the weight of the command change;
 - `--rate-weight W`: $w_\omega$ (default 0), on the norm of the body rates in rad/s;
@@ -204,6 +205,9 @@ $$r = 35 - \left( \lVert p - p_{\text{ref}} \rVert + w_a \lVert a_t - a_{t-1} \r
   $V \cos\beta$ only, so holding 30° of sideslip at 15 m/s needs 22% less thrust, and nothing in the reward stops it.
   Applied from the first step ($w_\beta$ = 5 or 10, 1M steps, one seed), it cut the success rate on the disturbed test
   flights from 73% to about 60% and doubled the body rates, so the Slurm array ramps it;
+- `--alpha-weight W`: $w_\alpha$ (default 0), the margin to the stall: $e_\alpha$ is how far the angle of attack goes
+  beyond -11° or 14°, 4° before the limits that end a flight, so the cost reaches $w_\alpha$ at the limit. Constant, not
+  ramped: it only acts near the stall;
 - `--smooth-ramp START END`: the four weights go linearly from their defaults (1, 0, 0, 0) to the given values between
   the two steps, updated at every curriculum check with the stored rewards recomputed (as `--energy-ramp`); without
   it they apply from the first step;
@@ -226,6 +230,13 @@ and sideslip (7.7° against 11.3°), with more stalls; $w_\omega = 2$ cuts the b
 $w_a = 10$ with $w_\omega = 2$ flies at 38° of sideslip. `slurm/tracking_px4plane_smooth2.slurm` trains the next four
 variants, all ramped from 1M to 3M steps on the air-relative point: $w_\omega = 2$ with $w_\beta = 5$, $w_\beta = 10$,
 $w_\omega = 2$ with $w_\beta = 10$, and $w_\beta = 20$.
+
+Results of job 41775052 in [`results/smooth2_px4plane/`](results/smooth2_px4plane/README.md). $w_\beta = 20$ flies
+almost without sideslip (4.7° mean and 16° max on the disturbed flights, against 11.3° and 30° for the base) and
+stalls no more than the base, for 3.7 m of RMSE; $w_\beta = 10$ is the most precise (3.2 m). Adding $w_\omega = 2$
+cuts the body rates by a third but brings the sideslip back to about 10° and moves the control surfaces more.
+`slurm/tracking_px4plane_smooth3.slurm` keeps $w_\beta = 20$ and adds $w_\omega = 1$, or the stall margin with
+$w_\alpha$ = 10 or 30, and tries $w_\beta = 40$.
 
 ## PX4's advanced_plane and flying the policy in Gazebo
 
